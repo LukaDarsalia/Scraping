@@ -1,3 +1,5 @@
 *pycache*
 .idea/
 *.DS_STORE*
+*.zip
+*.parquet

@@ -1,26 +1,26 @@
 pipeline:
   website: rustavi2
   steps:
-    - name: Crawler
-      input: null
-      output: rustavi2_crawled_urls.parquet
-      config:
-        start_urls:
-          - "https://rustavi2.ge/ka/news/302745"
-        max_retries: 3
-        time_sleep: 2
-        temp_dir: "rustavi2_crawler/"
-        num_processes: 1
+    # - name: Crawler
+    #   input: null
+    #   output: rustavi2_crawled_urls.parquet
+    #   config:
+    #     start_urls:
+    #       - "https://rustavi2.ge/ka/news/5"
+    #     max_retries: 3
+    #     time_sleep: 2
+    #     temp_dir: "rustavi2_crawler/"
+    #     num_processes: 1
 
-    - name: Scraper
-      input: rustavi2_crawled_urls.parquet
-      output: rustavi2_scraped_metadata.parquet
-      config:
-        raw_data_dir: "rustavi2_raw_data/"
-        temp_dir: "rustavi2_scraper/"
-        max_retries: 3
-        sleep_time: 2
-        num_processes: 1
+    # - name: Scraper
+    #   input: rustavi2_crawled_urls.parquet
+    #   output: rustavi2_scraped_metadata.parquet
+    #   config:
+    #     raw_data_dir: "rustavi2_raw_data/"
+    #     temp_dir: "rustavi2_scraper/"
+    #     max_retries: 3
+    #     sleep_time: 2
+    #     num_processes: 64
 
     - name: Parser
       input: rustavi2_scraped_metadata.parquet

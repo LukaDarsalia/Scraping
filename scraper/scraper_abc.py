@@ -8,7 +8,7 @@ from multiprocessing import Pool
 
 class ScraperABC(ABC):
     def __init__(self, input_path, output_path, raw_data_dir, temp_dir, max_retries=3, sleep_time=2, num_processes=4,
-                 checkpoint_time=1_000):
+                 checkpoint_time=100):
         """
         Initialize the scraper.
         :param temp_dir: Directory for storing temporary files.
@@ -117,6 +117,8 @@ class ScraperABC(ABC):
                 if not urls:
                     self.logger.info("All chunks are already processed. Exiting.")
                     return
+                else:
+                    self.logger.info(f"With backup we have to scrape {len(urls)} urls!")
 
             # Split URLs into chunks
             url_chunks = [urls[i:i + chunk_size] for i in range(0, len(urls), chunk_size)]

@@ -1,3 +1,5 @@
+import time
+
 import requests
 from scraper.scraper_abc import ScraperABC
 
@@ -13,6 +15,7 @@ class CustomScraper(ScraperABC):
         :return: Tuple (file_name, file_content).
         """
         try:
+            time.sleep(0.5)
             response = requests.get(url, timeout=10)
             response.raise_for_status()
 

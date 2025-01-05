@@ -1,10 +1,12 @@
 from parser.parser_abc import ParserABC
 from bs4 import BeautifulSoup
+from datetime import datetime
+
 
 class CustomParser(ParserABC):
     def parse_file(self, file_path, metadata):
         """
-        Parse the HTML file and extract content, title, and author.
+        Parse the HTML file and extract content, title, author, and timestamp.
         :param file_path: Path to the HTML file.
         :param metadata: Metadata associated with the file (e.g., URL, file_name).
         :return: Parsed data as a dictionary.
@@ -35,11 +37,15 @@ class CustomParser(ParserABC):
             else:
                 author = None
 
+            # Add scraped_at timestamp
+            scraped_at = datetime.now().isoformat()
+
             return {
                 "url": metadata["url"],
                 "title": title,
                 "body": text,
                 "author": author,
+                "scraped_at": scraped_at,
             }
 
         except Exception as e:
