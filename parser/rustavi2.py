@@ -17,13 +17,14 @@ class CustomParser(ParserABC):
 
             soup = BeautifulSoup(html_content, "html.parser")
 
-            # Extract the main text content
+            # Extract the main text content with paragraphs separated by new lines
             content_div = soup.find("div", {"id": "nw_txt"})
             if not content_div:
                 raise ValueError("Content with id 'nw_txt' not found")
 
-            # Combine all text from nested spans
-            text = " ".join(span.get_text(strip=True) for span in content_div.find_all("span"))
+            # Combine all text from <p> tags, separating paragraphs by new lines
+            paragraphs = [p.get_text(strip=True) for p in content_div.find_all("p")]
+            text = "\n".join(paragraphs)
 
             # Extract the title
             title_element = soup.find("div", {"class": "title"})
