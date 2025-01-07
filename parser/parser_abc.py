@@ -21,7 +21,7 @@ class Metadata:
     def to_dict(self):
         return {
             "author": self.author,
-            "category": self.category,
+            "category": str(self.category),
             "scraped_at": self.scraped_at,
             **self.additional_info,
         }
@@ -42,7 +42,7 @@ class ParsedData:
             "url": self.url,
             "title": self.title,
             "body": self.body,
-            "metadata": self.metadata.to_dict(),
+            **self.metadata.to_dict(),
         }
 
 

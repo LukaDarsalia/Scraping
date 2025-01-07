@@ -18,6 +18,8 @@ class CustomParser(ParserABC):
             with open(file_path, "r", encoding="utf-8") as f:
                 json_data = json.load(f)
 
+            if len(json_data) == 0:
+                return None
             # Extract relevant fields
             url = "https://www.interpressnews.ge" + json_data.get("url", metadata.get("url"))
             title = json_data.get("title", None)
@@ -36,13 +38,10 @@ class CustomParser(ParserABC):
 
             # Assemble the metadata
             parsed_metadata = Metadata(
-                author=None,  # No author data in this JSON
                 category=categories,
                 scraped_at=scraped_at,
                 additional_info={
-                    "alias": json_data.get("alias"),
                     "pub_dt": json_data.get("pub_dt"),
-                    "hashtags": json_data.get("hashtags", []),
                 }
             )
 

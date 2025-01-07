@@ -23,18 +23,18 @@ class CustomParser(ParserABC):
                 raise ValueError("Content with id 'nw_txt' not found")
 
             # Combine all text from <p> tags, separating paragraphs by new lines
-            paragraphs = [p.get_text(strip=True) for p in content_div.find_all("p")]
+            paragraphs = [p.get_text() for p in content_div.find_all("p")]
             text = "\n".join(paragraphs)
 
             # Extract the title
             title_element = soup.find("div", {"class": "title"})
-            title = title_element.get_text(strip=True) if title_element else "Unknown Title"
+            title = title_element.get_text() if title_element else "Unknown Title"
 
             # Extract the author
             author_block = soup.find("div", {"class": "author_bl"})
             if author_block:
                 author_span = author_block.find("span", style="color:#ee5700")
-                author = author_span.get_text(strip=True) if author_span else None
+                author = author_span.get_text() if author_span else None
             else:
                 author = None
 

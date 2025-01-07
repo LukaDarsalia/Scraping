@@ -77,6 +77,7 @@ class PipelineRunner:
             time_sleep=config["time_sleep"],
             num_processes=config["num_processes"],
         )
+
         crawler.run()
 
     def run_scraper(self, website, input_path, output_path, config):
