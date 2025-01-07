@@ -1,31 +1,31 @@
 pipeline:
-  website: ipn
+  website: bm
   steps:
     - name: Crawler
       input: null
-      output: ipn_crawled_urls.parquet
+      output: bm_crawled_urls.parquet
       config:
         start_urls:
-          - "https://www.interpressnews.ge/ka/api/article/1"
+          - "https://bm.ge/api/news/*/1"
         max_retries: 3
         time_sleep: 2
         temp_dir: "crawler/"
         num_processes: 1
 
     - name: Scraper
-      input: ipn_crawled_urls.parquet
-      output: ipn_scraped_metadata.parquet
+      input: bm_crawled_urls.parquet
+      output: bm_scraped_metadata.parquet
       config:
-        raw_data_dir: "ipn_raw_data/"
+        raw_data_dir: "bm_raw_data/"
         temp_dir: "scraper/"
         max_retries: 5
-        sleep_time: 4
-        num_processes: 32
+        sleep_time: 10
+        num_processes: 1
 
     - name: Parser
-      input: ipn_scraped_metadata.parquet
-      output: ipn_parsed_data.parquet
+      input: bm_scraped_metadata.parquet
+      output: bm_parsed_data.parquet
       config:
-        raw_data_dir: "ipn_raw_data/"
+        raw_data_dir: "bm_raw_data/"
         temp_dir: "parser/"
         num_processes: 64
