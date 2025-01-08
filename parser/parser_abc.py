@@ -101,7 +101,10 @@ class ParserABC(ABC):
             try:
                 parsed_result = self.parse_file(file_path, row.to_dict())
                 if parsed_result:
-                    parsed_data.append(parsed_result)
+                    if type(parsed_result) == list:
+                        parsed_data.extend(parsed_result)
+                    else:
+                        parsed_data.append(parsed_result)
             except Exception as e:
                 self.logger.error(f"Error parsing file {file_path}: {e}")
 

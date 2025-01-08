@@ -120,6 +120,11 @@ class ScraperABC(ABC):
                 else:
                     self.logger.info(f"With backup we have to scrape {len(urls)} urls!")
 
+            if self.num_processes == 1:
+                self.process_chunk(urls, os.path.join(self.temp_dir, "temp_metadata_0.parquet"))
+                self.merge_temp_files([os.path.join(self.temp_dir, "temp_metadata_0.parquet")])
+                return
+
             # Split URLs into chunks
             url_chunks = [urls[i:i + chunk_size] for i in range(0, len(urls), chunk_size)]
 

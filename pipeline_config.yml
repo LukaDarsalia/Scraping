@@ -6,7 +6,7 @@ pipeline:
       output: bm_crawled_urls.parquet
       config:
         start_urls:
-          - "https://bm.ge/api/news/*/1"
+          - "https://bm.ge/api/news/search?phrase=.&page=1"
         max_retries: 3
         time_sleep: 2
         temp_dir: "crawler/"
@@ -20,7 +20,7 @@ pipeline:
         temp_dir: "scraper/"
         max_retries: 5
         sleep_time: 10
-        num_processes: 1
+        num_processes: 4
 
     - name: Parser
       input: bm_scraped_metadata.parquet
