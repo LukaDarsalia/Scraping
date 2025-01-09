@@ -1,4 +1,4 @@
-from parser.parser_abc import ParserABC
+from parser.parser_abc import ParserABC, ParsedData, html2markdown
 from bs4 import BeautifulSoup
 from datetime import datetime
 
@@ -22,32 +22,32 @@ class CustomParser(ParserABC):
             if not content_div:
                 raise ValueError("Content with id 'nw_txt' not found")
 
+            date_object = datetime.strptime(
+                soup.find("div", {"class": "l"}).find('div', {'itemprop': 'datePublished'}).text.strip(),
+                '%d-%m-%Y %H:%M')
+
             # Combine all text from <p> tags, separating paragraphs by new lines
-            paragraphs = [p.get_text() for p in content_div.find_all("p")]
-            text = "\n".join(paragraphs)
+            content_div_html = content_div.prettify()
+            text = html2markdown(content_div_html)
 
             # Extract the title
             title_element = soup.find("div", {"class": "title"})
             title = title_element.get_text() if title_element else "Unknown Title"
 
-            # Extract the author
-            author_block = soup.find("div", {"class": "author_bl"})
-            if author_block:
-                author_span = author_block.find("span", style="color:#ee5700")
-                author = author_span.get_text() if author_span else None
-            else:
-                author = None
-
             # Add scraped_at timestamp
-            scraped_at = datetime.now().isoformat()
+            with open(file_path, 'rb') as file:
+                file_bytes = file.read()
 
-            return {
-                "url": metadata["url"],
-                "title": title,
-                "body": text,
-                "author": author,
-                "scraped_at": scraped_at,
-            }
+            parsed_data = ParsedData(text=text,
+                                     time=date_object,
+                                     URL=metadata["url"],
+                                     header=title,
+                                     raw=file_bytes,
+                                     format="html",
+                                     category=None
+                                     )
+
+            return parsed_data.to_dict()
 
         except Exception as e:
             self.logger.error(f"Error parsing file {file_path}: {e}")

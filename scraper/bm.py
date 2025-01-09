@@ -5,7 +5,7 @@ from scraper.scraper_abc import ScraperABC
 from fake_useragent import UserAgent
 from requests_tor import RequestsTor
 
-rt = RequestsTor(autochange_id=5)
+rt = RequestsTor(autochange_id=50)
 
 class CustomScraper(ScraperABC):
     """
@@ -17,7 +17,7 @@ class CustomScraper(ScraperABC):
         :param url: URL to scrape.
         :return: Tuple (file_name, file_content).
         """
-        time.sleep(2)
+        time.sleep(1.5)
         ua = UserAgent()
         try:
             response = rt.get(url, timeout=10, headers={

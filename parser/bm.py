@@ -3,7 +3,7 @@ from datetime import datetime
 import html
 import json
 
-from parser.parser_abc import ParserABC, Metadata, ParsedData
+from parser.parser_abc import ParserABC, ParsedData, html2markdown
 
 
 class CustomParser(ParserABC):
@@ -18,52 +18,40 @@ class CustomParser(ParserABC):
             # Read and parse the JSON file
             with open(file_path, "r", encoding="utf-8") as f:
                 json_data = json.load(f)
+            with open(file_path, 'rb') as file:
+                file_bytes = file.read()
 
             if len(json_data) <= 1:
                 return None
-            # Extract relevant fields
-            url = "https://bm.ge/api/news/*/" + file_path.split('/')[-1].split('.')[0]
-            title = json_data.get("title", None)
+            results = []
+            for i in json_data['data']:
+                url = metadata['url']
+                title = i.get("title", None)
 
-            # Process the body content
-            fulltext = json_data.get("text", "")
-            soup = BeautifulSoup(fulltext, "html.parser")
-            paragraphs = soup.get_text(separator="\n").split("\n")
+                # Process the body content
+                fulltext = i.get("text", "")
+                fulltext.replace('\n', '')
+                fulltext.replace('\r', '')
+                text = html2markdown(fulltext)
 
-            # Decode HTML entities and clean up empty lines
-            decoded_paragraphs = [html.unescape(paragraph.strip()) for paragraph in paragraphs if paragraph.strip()]
+                if i.get("publish_date"):
+                    date_object = datetime.strptime(i.get("publish_date"), "%Y-%m-%d %H:%M:%S")
+                else:
+                    date_object = None
 
-            body = "\n".join(decoded_paragraphs)
 
-            # Extract categories
-            categories = [category.get("name") for category in json_data.get("tags", [])]
-
-            # Add scraped_at timestamp
-            scraped_at = datetime.now().isoformat()
-
-            author = json_data['user']
-
-            if author:
-                author = author['name']
-
-            # Assemble the metadata
-            parsed_metadata = Metadata(
-                author=author,
-                category=categories,
-                scraped_at=scraped_at,
-                additional_info={
-                    "publish_date": json_data.get("publish_date"),
-                }
-            )
-
-            # Return the parsed data as a dictionary
-            return ParsedData(
-                url=url,
-                title=title,
-                body=body,
-                metadata=parsed_metadata
-            ).to_dict()
-
+                # Return the parsed data as a dictionary
+                item = ParsedData(
+                    URL=url,
+                    raw=file_bytes,
+                    format="json",
+                    header=title,
+                    text=text,
+                    time=date_object,
+                    category=None
+                ).to_dict()
+                results.append(item)
+            return results
         except Exception as e:
             self.logger.error(f"Error parsing file {file_path}: {e}")
             return None

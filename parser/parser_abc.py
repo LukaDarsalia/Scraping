@@ -1,30 +1,27 @@
+import datetime
 import logging
 import os
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from multiprocessing import Pool
 from typing import Optional, Dict, List
-
+import subprocess
 import pandas as pd
 
+def html2markdown(html_content):
+    # Run the html2markdown command
+    result = subprocess.run(
+        ["html2markdown"],  # Command
+        input=html_content,  # Provide HTML input
+        text=True,           # Ensure input/output are treated as strings
+        capture_output=True  # Capture the output
+    )
 
-@dataclass
-class Metadata:
-    """
-    Metadata structure for parsed data.
-    """
-    author: Optional[str] = None
-    category: Optional[List[str]] = None
-    scraped_at: Optional[str] = None  # ISO format timestamp
-    additional_info: Dict[str, str] = field(default_factory=dict)
-
-    def to_dict(self):
-        return {
-            "author": self.author,
-            "category": str(self.category),
-            "scraped_at": self.scraped_at,
-            **self.additional_info,
-        }
+    # Print the Markdown output
+    if result.returncode == 0:  # Check for success
+        return result.stdout.strip()
+    else:
+        raise f"Error: {result.stderr}"
 
 
 @dataclass
@@ -32,17 +29,25 @@ class ParsedData:
     """
     Data structure for parsed content.
     """
-    url: str
-    title: Optional[str] = None
-    body: Optional[str] = None
-    metadata: Metadata = field(default_factory=Metadata)
+    URL: str
+    raw: bytes
+    format: str
+    header: Optional[str]
+    text: str
+    category: Optional[List[str]]
+    time: Optional[datetime.datetime]
+
+
 
     def to_dict(self):
         return {
-            "url": self.url,
-            "title": self.title,
-            "body": self.body,
-            **self.metadata.to_dict(),
+            "url": self.URL,
+            "raw": self.raw,
+            "format": self.format,
+            "text": self.text,
+            "header": self.header,
+            "category": self.category,
+            "time": self.time
         }
 
 

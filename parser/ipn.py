@@ -2,7 +2,7 @@ from bs4 import BeautifulSoup
 from datetime import datetime
 import json
 
-from parser.parser_abc import ParserABC, Metadata, ParsedData
+from parser.parser_abc import ParserABC, ParsedData, html2markdown
 
 
 class CustomParser(ParserABC):
@@ -21,36 +21,32 @@ class CustomParser(ParserABC):
             if len(json_data) == 0:
                 return None
             # Extract relevant fields
-            url = "https://www.interpressnews.ge" + json_data.get("url", metadata.get("url"))
+            url = metadata['url']
             title = json_data.get("title", None)
 
             # Process the body content
             fulltext = json_data.get("fulltext", "")
-            soup = BeautifulSoup(fulltext, "html.parser")
-            paragraphs = [p.get_text() for p in soup.find_all("p")]
-            body = "\n".join(paragraphs)
+            fulltext.replace('\n', '')
+            fulltext.replace('\r', '')
 
+            text = html2markdown(fulltext)
             # Extract categories
             categories = [category.get("title") for category in json_data.get("categories", [])]
 
+            date_object = datetime.strptime(json_data.get("pub_dt"), "%Y-%m-%dT%H:%M")
             # Add scraped_at timestamp
-            scraped_at = datetime.now().isoformat()
-
-            # Assemble the metadata
-            parsed_metadata = Metadata(
-                category=categories,
-                scraped_at=scraped_at,
-                additional_info={
-                    "pub_dt": json_data.get("pub_dt"),
-                }
-            )
+            with open(file_path, 'rb') as file:
+                file_bytes = file.read()
 
             # Return the parsed data as a dictionary
             return ParsedData(
-                url=url,
-                title=title,
-                body=body,
-                metadata=parsed_metadata
+                URL=url,
+                raw=file_bytes,
+                format="json",
+                header=title,
+                text=text,
+                time=date_object,
+                category=categories
             ).to_dict()
 
         except Exception as e:
