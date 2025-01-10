@@ -32,8 +32,11 @@ class CustomParser(ParserABC):
             text = html2markdown(fulltext)
             # Extract categories
             categories = [category.get("title") for category in json_data.get("categories", [])]
+            try:
+                date_object = datetime.strptime(json_data.get("pub_dt"), "%Y-%m-%dT%H:%M")
+            except:
+                date_object = None
 
-            date_object = datetime.strptime(json_data.get("pub_dt"), "%Y-%m-%dT%H:%M")
             # Add scraped_at timestamp
             with open(file_path, 'rb') as file:
                 file_bytes = file.read()

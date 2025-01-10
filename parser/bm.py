@@ -34,11 +34,13 @@ class CustomParser(ParserABC):
                 fulltext.replace('\r', '')
                 text = html2markdown(fulltext)
 
-                if i.get("publish_date"):
-                    date_object = datetime.strptime(i.get("publish_date"), "%Y-%m-%d %H:%M:%S")
-                else:
+                try:
+                    if i.get("publish_date"):
+                        date_object = datetime.strptime(i.get("publish_date"), "%Y-%m-%d %H:%M:%S")
+                    else:
+                        date_object = None
+                except:
                     date_object = None
-
 
                 # Return the parsed data as a dictionary
                 item = ParsedData(
