@@ -1,31 +1,31 @@
 pipeline:
-  website: bm
+  website: bpn
   steps:
     - name: Crawler
       input: null
-      output: bm_crawled_urls.parquet
+      output: bpn_crawled_urls.parquet
       config:
         start_urls:
-          - "https://bm.ge/api/news/search?phrase=.&page=1"
+          - "https://www.bpn.ge/api/article/1"
         max_retries: 3
         time_sleep: 2
         temp_dir: "crawler/"
         num_processes: 1
 
     - name: Scraper
-      input: bm_crawled_urls.parquet
-      output: bm_scraped_metadata.parquet
+      input: bpn_crawled_urls.parquet
+      output: bpn_scraped_metadata.parquet
       config:
-        raw_data_dir: "bm_raw_data/"
+        raw_data_dir: "bpn_raw_data/"
         temp_dir: "scraper/"
         max_retries: 5
-        sleep_time: 10
-        num_processes: 4
+        sleep_time: 5
+        num_processes: 11
 
     - name: Parser
-      input: bm_scraped_metadata.parquet
-      output: bm_parsed_data.parquet
+      input: bpn_scraped_metadata.parquet
+      output: bpn_parsed_data.parquet
       config:
-        raw_data_dir: "bm_raw_data/"
+        raw_data_dir: "bpn_raw_data/"
         temp_dir: "parser/"
         num_processes: 64

@@ -2,7 +2,6 @@ import time
 
 import requests
 from scraper.scraper_abc import ScraperABC
-from fake_useragent import UserAgent
 from requests_tor import RequestsTor
 
 rt = RequestsTor(autochange_id=50)
@@ -17,12 +16,9 @@ class CustomScraper(ScraperABC):
         :param url: URL to scrape.
         :return: Tuple (file_name, file_content).
         """
-        time.sleep(3)
-        ua = UserAgent()
         try:
-            response = rt.get(url, timeout=10, headers={
-                "User-Agent": ua.random
-            })
+            time.sleep(0.5)
+            response = rt.get(url, timeout=10)
             response.raise_for_status()
 
             # Use URL hash to generate a unique file name
