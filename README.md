@@ -192,3 +192,8 @@ Example log format:
 2025-01-22 12:01:00 - ScraperABC - ERROR - Failed to fetch URL: https://example.com
 ```
 
+---
+
+## License
+
+This project is licensed under the MIT License. See `LICENSE` for details.
