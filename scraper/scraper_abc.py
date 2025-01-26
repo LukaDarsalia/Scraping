@@ -1,4 +1,5 @@
 import time
+import random
 from abc import ABC, abstractmethod
 import os
 import pandas as pd
@@ -7,8 +8,8 @@ from multiprocessing import Pool
 
 
 class ScraperABC(ABC):
-    def __init__(self, input_path, output_path, raw_data_dir, temp_dir, max_retries=3, sleep_time=2, num_processes=4,
-                 checkpoint_time=100):
+    def __init__(self, input_path, output_path, raw_data_dir, temp_dir, backoff_min=1, backoff_max=5, backoff_factor=2,
+                 max_retries=3, sleep_time=2, num_processes=4, checkpoint_time=100):
         """
         Initialize the scraper.
         :param temp_dir: Directory for storing temporary files.
@@ -17,6 +18,9 @@ class ScraperABC(ABC):
         :param output_path: Path where the output parquet file (metadata) will be saved.
         :param raw_data_dir: Directory where raw scraped data files will be saved.
         :param max_retries: Maximum number of retries for failed URLs.
+        :param backoff_min: Minimum initial backoff time in seconds.
+        :param backoff_max: Maximum initial backoff time in seconds.
+        :param backoff_factor: Multiplicative factor for exponential backoff.
         :param num_processes: Number of parallel processes for scraping.
         :param checkpoint_time: Saves checkpoint in that steps.
         """
@@ -27,6 +31,9 @@ class ScraperABC(ABC):
         self.raw_data_dir = raw_data_dir
         self.temp_dir = temp_dir
         self.max_retries = max_retries
+        self.backoff_min = backoff_min
+        self.backoff_max = backoff_max
+        self.backoff_factor = backoff_factor
         self.num_processes = num_processes
         os.makedirs(self.raw_data_dir, exist_ok=True)
         os.makedirs(self.temp_dir, exist_ok=True)
@@ -54,7 +61,32 @@ class ScraperABC(ABC):
             self.logger.error(f"Error saving raw data to {file_name}: {e}")
             return None
 
+    def get_initial_backoff(self):
+        """
+        Generate an initial backoff time between min and max values.
+        :return: Initial backoff time in seconds
+        """
+        return random.uniform(self.backoff_min, self.backoff_max)
+
+    def get_backoff_time(self, attempt, initial_backoff):
+        """
+        Calculate the backoff time for the current attempt using exponential backoff
+        with jitter.
+        :param attempt: Current attempt number (0-based)
+        :param initial_backoff: Initial backoff time for this URL
+        :return: Time to wait in seconds
+        """
+        # Calculate exponential backoff using the provided initial time
+        backoff = initial_backoff * (self.backoff_factor ** attempt)
+
+        # Add jitter (±10% of the calculated backoff)
+        jitter = random.uniform(-0.1 * backoff, 0.1 * backoff)
+        return backoff + jitter
+
     def scrape_with_retries(self, url):
+        # Generate initial backoff time for this URL
+        initial_backoff = self.get_initial_backoff()
+
         for attempt in range(self.max_retries):
             try:
                 self.logger.info(f"Scraping (Attempt {attempt + 1}/{self.max_retries}): {url}")
@@ -64,7 +96,9 @@ class ScraperABC(ABC):
                     return {"url": url, "file_name": file_name, "file_path": file_path}
             except Exception as e:
                 self.logger.error(f"Error scraping {url}: {e}")
-                time.sleep(self.sleep_time)
+                backoff_time = self.get_backoff_time(attempt, initial_backoff)
+                self.logger.info(f"Backing off for {backoff_time:.2f} seconds before retry...")
+                time.sleep(backoff_time)
             self.logger.info(f"Retrying {url}...")
 
         self.logger.warning(f"Failed to scrape {url} after {self.max_retries} attempts.")

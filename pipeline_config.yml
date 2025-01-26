@@ -1,31 +1,35 @@
 pipeline:
-  website: openscience
+  website: bpn
   steps:
-#    - name: Crawler
-#      input: null
-#      output: openscience_crawled_urls.parquet
-#      config:
-#        start_urls:
-#          - "https://openscience.ge/server/api/discover/search/objects?sort=score,DESC&size=100&f.entityType=Publication,equals&embed=thumbnail&embed=item%2Fthumbnail&page=0"
-#        max_retries: 3
-#        time_sleep: 2
-#        temp_dir: "crawler/"
-#        num_processes: 1
+    - name: Crawler
+      input: null
+      output: bpn_crawled_urls.parquet
+      config:
+        start_urls:
+          - "https://www.bpn.ge/api/article/135011"
+        max_retries: 3
+        time_sleep: 2
+        temp_dir: "crawler/"
+        num_processes: 1
 
     - name: Scraper
-      input: openscience_crawled_urls.parquet
-      output: openscience_scraped_metadata.parquet
+      input: bpn_crawled_urls.parquet
+      output: bpn_scraped_metadata.parquet
       config:
-        raw_data_dir: "openscience_raw_data/"
+        raw_data_dir: "bpn_raw_data/"
         temp_dir: "scraper/"
-        max_retries: 5
+        max_retries: 3
         sleep_time: 5
         num_processes: 11
+        backoff_min: 1
+        backoff_max: 5
+        backoff_factor: 2
+        checkpoint_time: 100
 
-#    - name: Parser
-#      input: openscience_scraped_metadata.parquet
-#      output: openscience_parsed_data.parquet
-#      config:
-#        raw_data_dir: "openscience_raw_data/"
-#        temp_dir: "parser/"
-#        num_processes: 64
+    - name: Parser
+      input: bpn_scraped_metadata.parquet
+      output: bpn_parsed_data.parquet
+      config:
+        raw_data_dir: "bpn_raw_data/"
+        temp_dir: "parser/"
+        num_processes: 64
