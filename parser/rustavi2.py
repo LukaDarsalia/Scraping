@@ -1,4 +1,6 @@
-from parser.parser_abc import ParserABC, ParsedData, html2markdown
+from parser.parser_abc import ParserABC
+from core.utils import html2markdown
+from parser.types import ParsedData
 from bs4 import BeautifulSoup
 from datetime import datetime
 

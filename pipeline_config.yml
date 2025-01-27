@@ -8,6 +8,9 @@ pipeline:
         start_urls:
           - "https://www.bpn.ge/api/article/135011"
         max_retries: 3
+        backoff_min: 1
+        backoff_max: 5
+        backoff_factor: 2
         time_sleep: 2
         temp_dir: "crawler/"
         num_processes: 1
@@ -24,7 +27,7 @@ pipeline:
         backoff_min: 1
         backoff_max: 5
         backoff_factor: 2
-        checkpoint_time: 100
+        checkpoint_time: 2
 
     - name: Parser
       input: bpn_scraped_metadata.parquet
@@ -33,3 +36,7 @@ pipeline:
         raw_data_dir: "bpn_raw_data/"
         temp_dir: "parser/"
         num_processes: 64
+        max_retries: 3
+        backoff_min: 1
+        backoff_max: 5
+        backoff_factor: 2

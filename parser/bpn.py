@@ -1,7 +1,8 @@
 import json
 from datetime import datetime
-
-from parser.parser_abc import ParserABC, ParsedData, html2markdown
+from parser.parser_abc import ParserABC
+from core.utils import html2markdown
+from parser.types import ParsedData
 
 
 class CustomParser(ParserABC):
