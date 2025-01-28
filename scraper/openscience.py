@@ -22,8 +22,7 @@ class CustomScraper(ScraperABC):
             response = rt.get(url, timeout=10)
             response.raise_for_status()
 
-            file_name = f"{url.split('/')[-2]}.pdf"
-            return file_name, response.content
+            return 'pdf', response.content
         except requests.RequestException as e:
             self.logger.error(f"Failed to fetch {url}: {e}")
             raise
