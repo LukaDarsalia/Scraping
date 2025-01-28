@@ -1,14 +1,19 @@
-import time
-import random
-from abc import ABC, abstractmethod
-import os
-import pandas as pd
 import logging
-from multiprocessing import Pool
+import os
+import random
+import time
+from abc import ABC, abstractmethod
+from typing import Tuple
+
+import pandas as pd
+from tqdm import tqdm
+
+from core.utils import URL, ScrapeData, run_processes, merge_temp_files, TEMP_FILE, save_temp, \
+    get_backup_urls
 
 
 class ScraperABC(ABC):
-    def __init__(self, input_path, output_path, raw_data_dir, temp_dir, backoff_min=1, backoff_max=5, backoff_factor=2,
+    def __init__(self, input_path, output_path, temp_dir, backoff_min=1, backoff_max=5, backoff_factor=2,
                  max_retries=3, sleep_time=2, num_processes=4, checkpoint_time=100):
         """
         Initialize the scraper.
@@ -16,7 +21,6 @@ class ScraperABC(ABC):
         :param sleep_time: Time to sleep between retries.
         :param input_path: Path to the input parquet file containing URLs.
         :param output_path: Path where the output parquet file (metadata) will be saved.
-        :param raw_data_dir: Directory where raw scraped data files will be saved.
         :param max_retries: Maximum number of retries for failed URLs.
         :param backoff_min: Minimum initial backoff time in seconds.
         :param backoff_max: Maximum initial backoff time in seconds.
@@ -28,14 +32,12 @@ class ScraperABC(ABC):
         self.sleep_time = sleep_time
         self.input_path = input_path
         self.output_path = output_path
-        self.raw_data_dir = raw_data_dir
         self.temp_dir = temp_dir
         self.max_retries = max_retries
         self.backoff_min = backoff_min
         self.backoff_max = backoff_max
         self.backoff_factor = backoff_factor
         self.num_processes = num_processes
-        os.makedirs(self.raw_data_dir, exist_ok=True)
         os.makedirs(self.temp_dir, exist_ok=True)
         self.logger = logging.getLogger(self.__class__.__name__)
         self.setup_logger()
@@ -44,22 +46,12 @@ class ScraperABC(ABC):
         logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 
     @abstractmethod
-    def scrape_url(self, url):
+    def scrape_url(self, url) -> Tuple[str, bytes]:
         """
         Abstract method to scrape a single URL.
         Must be implemented by subclasses.
         """
         pass
-
-    def save_raw_data(self, file_name, content):
-        try:
-            file_path = os.path.join(self.raw_data_dir, file_name)
-            with open(file_path, "wb") as f:
-                f.write(content)
-            return file_path
-        except Exception as e:
-            self.logger.error(f"Error saving raw data to {file_name}: {e}")
-            return None
 
     def get_initial_backoff(self):
         """
@@ -83,17 +75,18 @@ class ScraperABC(ABC):
         jitter = random.uniform(-0.1 * backoff, 0.1 * backoff)
         return backoff + jitter
 
-    def scrape_with_retries(self, url):
+    def scrape_with_retries(self, url) -> ScrapeData:
         # Generate initial backoff time for this URL
         initial_backoff = self.get_initial_backoff()
 
         for attempt in range(self.max_retries):
             try:
                 self.logger.info(f"Scraping (Attempt {attempt + 1}/{self.max_retries}): {url}")
-                file_name, file_content = self.scrape_url(url)
-                if file_name and file_content:
-                    file_path = self.save_raw_data(file_name, file_content)
-                    return {"url": url, "file_name": file_name, "file_path": file_path}
+                content_format, file_content = self.scrape_url(url)
+                return ScrapeData(url=url,
+                                  content=file_content,
+                                  content_format=content_format,
+                                  error=None,)
             except Exception as e:
                 self.logger.error(f"Error scraping {url}: {e}")
                 backoff_time = self.get_backoff_time(attempt, initial_backoff)
@@ -102,24 +95,23 @@ class ScraperABC(ABC):
             self.logger.info(f"Retrying {url}...")
 
         self.logger.warning(f"Failed to scrape {url} after {self.max_retries} attempts.")
-        return {"url": url, "file_name": None, "file_path": None, "error": "Failed after retries"}
+        return ScrapeData(url=url, error="Failed after retries", content=None, content_format=None, )
 
     def process_chunk(self, urls, temp_file):
         """
         Process a chunk of URLs and save the metadata to a temporary file.
         """
         local_metadata = []
-        counter=0
-        for url in urls:
+        counter = 0
+        for url in tqdm(urls):
             result = self.scrape_with_retries(url)
-            local_metadata.append(result)
+            local_metadata.append(result.to_dict())
             counter += 1
             if counter % self.checkpoint_time == 0:
-                temp_df = pd.DataFrame(local_metadata)
-                temp_df.to_parquet(temp_file, index=False)
+                save_temp(local_metadata, temp_file)
+                local_metadata = []
                 self.logger.info(f"Saved checkpoint metadata for chunk to {temp_file}")
-        temp_df = pd.DataFrame(local_metadata)
-        temp_df.to_parquet(temp_file, index=False)
+        save_temp(local_metadata, temp_file)
         self.logger.info(f"Saved metadata for chunk to {temp_file}")
 
     def run(self):
@@ -129,66 +121,39 @@ class ScraperABC(ABC):
         self.logger.info("Starting scraping...")
         try:
             # Load URLs from the input parquet file
-            urls = pd.read_parquet(self.input_path)['url'].tolist()
-            if os.path.exists(self.output_path):
-                out_pd = pd.read_parquet(self.output_path)
-                out_pd = out_pd[~out_pd['file_path'].isna()]['url'].tolist()
+            urls = pd.read_parquet(self.input_path)[URL].tolist()
 
-                urls = list(set(urls) - set(out_pd))
+            # Load backup urls (if exists)
+            completed_urls = get_backup_urls(self.output_path, self.temp_dir)
 
-                if not urls:
-                    self.logger.info("All chunks are already processed. Exiting.")
-                    return
-                else:
-                    self.logger.info(f"With backup we have to scrape {len(urls)} urls!")
+            # Exclude already done urls
+            urls = list(set(urls) - set(completed_urls))
+            if not urls:
+                self.logger.info("All chunks are already processed. Exiting.")
+                return
+            else:
+                self.logger.info(f"With backup we have to scrape {len(urls)} urls!")
+
+            # Get each chunk size
             chunk_size = len(urls) // self.num_processes
-            obj_to_conc=[pd.read_parquet(f) for f in os.listdir(self.temp_dir) if f.startswith("temp_metadata_")]
-            if len(obj_to_conc) > 0:
-                completed_files = pd.concat(obj_to_conc)
-                completed_urls = completed_files[~completed_files['file_path'].isna()]['url'].tolist()
+            if chunk_size == 0:
+                chunk_size = len(urls)
+                self.num_processes = 1
 
-                urls = list(set(urls) - set(completed_urls))
-                if not urls:
-                    self.logger.info("All chunks are already processed. Exiting.")
-                    return
-                else:
-                    self.logger.info(f"With backup we have to scrape {len(urls)} urls!")
-
+            # Handle one process
             if self.num_processes == 1:
-                self.process_chunk(urls, os.path.join(self.temp_dir, "temp_metadata_0.parquet"))
-                self.merge_temp_files([os.path.join(self.temp_dir, "temp_metadata_0.parquet")])
+                self.process_chunk(urls, os.path.join(self.temp_dir, TEMP_FILE(0)))
+                merge_temp_files(self.temp_dir,
+                                 self.output_path,
+                                 'Scraper',
+                                 self.logger)
                 return
 
-            # Split URLs into chunks
-            url_chunks = [urls[i:i + chunk_size] for i in range(0, len(urls), chunk_size)]
-
-            # Generate temporary file paths for each chunk
-            temp_files = [os.path.join(self.temp_dir, f"temp_metadata_{i}.parquet") for i in range(len(url_chunks))]
-
-            # Use multiprocessing to process chunks
-            with Pool(self.num_processes) as pool:
-                pool.starmap(self.process_chunk, zip(url_chunks, temp_files))
-
+            run_processes(urls, chunk_size, self.temp_dir, self.num_processes, self.process_chunk)
             # Merge temporary files into the final output
-            self.merge_temp_files(temp_files)
+            merge_temp_files(self.temp_dir,
+                             self.output_path,
+                             'Scraper',
+                             self.logger)
         except Exception as e:
             self.logger.error(f"Error running scraper: {e}")
-
-    def merge_temp_files(self, temp_files):
-        """
-        Merge all temporary files into the final output parquet file.
-        """
-        try:
-            all_metadata = pd.concat([pd.read_parquet(file) for file in temp_files], ignore_index=True)
-            if os.path.exists(self.output_path):
-                out_pd = pd.read_parquet(self.output_path)
-                all_metadata = pd.concat([all_metadata, out_pd], ignore_index=True)
-            all_metadata.to_parquet(self.output_path, index=False)
-            self.logger.info(f"Saved final metadata to {self.output_path}")
-
-            # Clean up temporary files
-            for file in temp_files:
-                os.remove(file)
-            self.logger.info("Cleaned up temporary files.")
-        except Exception as e:
-            self.logger.error(f"Error merging temporary files: {e}")

@@ -105,6 +105,7 @@ class PipelineRunner:
             raw_data_dir=config["raw_data_dir"],
             temp_dir=config["temp_dir"],
             num_processes=config["num_processes"],
+            checkpoint_time=config.get("checkpoint_time", 100)
         )
         parser.run()
 

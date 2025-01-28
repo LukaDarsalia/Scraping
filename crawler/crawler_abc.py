@@ -1,9 +1,13 @@
 import time
 from abc import ABC, abstractmethod
 import os
+from typing import Tuple, List
+
 import pandas as pd
 import logging
 from multiprocessing import Pool
+
+from core.utils import merge_temp_files, CrawlData, TEMP_FILE
 
 
 class CrawlerABC(ABC):
@@ -38,7 +42,7 @@ class CrawlerABC(ABC):
         logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 
     @abstractmethod
-    def fetch_links(self, url):
+    def fetch_links(self, url) -> Tuple[List[str], List[str]]:
         """
         Abstract method to fetch links from a given URL.
         Must be implemented by subclasses.
@@ -47,7 +51,7 @@ class CrawlerABC(ABC):
         """
         pass
 
-    def fetch_links_with_retries(self, url):
+    def fetch_links_with_retries(self, url) -> Tuple[List[str], List[str]]:
         """
         Fetch links from a URL with retry logic.
         :param url: URL to crawl.
@@ -63,7 +67,7 @@ class CrawlerABC(ABC):
             self.logger.info(f"Retrying {url}...")
 
         self.logger.warning(f"Failed to fetch links from {url} after {self.max_retries} attempts.")
-        return []
+        return [], []
 
     def process_chunk(self, chunk, temp_file):
         """
@@ -81,15 +85,16 @@ class CrawlerABC(ABC):
 
             self.logger.info(f"Crawling: {url}")
             try:
-                new_links = self.fetch_links_with_retries(url)
-                local_urls.extend(new_links)
-                queue.extend(new_links)
+                key_urls, value_urls = self.fetch_links_with_retries(url)
+
+                local_urls.extend([CrawlData(url).to_dict() for url in value_urls])
+                queue.extend(key_urls)
                 self.visited_urls.add(url)
             except Exception as e:
                 self.logger.error(f"Unexpected error crawling {url}: {e}")
 
         # Save the results for this chunk
-        pd.DataFrame({'url': list(set(local_urls))}).to_parquet(temp_file, index=False)
+        pd.DataFrame(local_urls).to_parquet(temp_file, index=False)
         self.logger.info(f"Saved chunk results to {temp_file}")
 
     def run(self):
@@ -97,36 +102,21 @@ class CrawlerABC(ABC):
         Entry point to start the crawler using multiprocessing.
         """
         self.logger.info("Starting crawl...")
-
-        # Split the start URLs into chunks
-        chunk_size = max(1, len(self.start_urls) // self.num_processes)
-        url_chunks = [self.start_urls[i:i + chunk_size] for i in range(0, len(self.start_urls), chunk_size)]
-        temp_files = [os.path.join(self.temp_dir, f"temp_crawl_{i}.parquet") for i in range(len(url_chunks))]
-
         try:
+            # Split the start URLs into chunks
+            chunk_size = max(1, len(self.start_urls) // self.num_processes)
+            url_chunks = [self.start_urls[i:i + chunk_size] for i in range(0, len(self.start_urls), chunk_size)]
+            temp_files = [os.path.join(self.temp_dir, TEMP_FILE(i)) for i in range(len(url_chunks))]
+
             # Use multiprocessing to process each chunk
             with Pool(self.num_processes) as pool:
                 pool.starmap(self.process_chunk, zip(url_chunks, temp_files))
 
             # Merge all temporary files into the final output
-            self.merge_temp_files(temp_files)
+            merge_temp_files(self.temp_dir,
+                             self.output_path,
+                             'Crawler',
+                             self.logger)
         except Exception as e:
             self.logger.error(f"Error during crawl: {e}")
 
-    def merge_temp_files(self, temp_files):
-        """
-        Merge all temporary files into the final output parquet file.
-        :param temp_files: List of paths to the temporary files.
-        """
-        try:
-            all_urls = pd.concat([pd.read_parquet(file) for file in temp_files], ignore_index=True)
-            all_urls = all_urls.drop_duplicates(subset=['url'])
-            all_urls.to_parquet(self.output_path, index=False)
-            self.logger.info(f"Saved final crawled URLs to {self.output_path}")
-
-            # Clean up temporary files
-            for file in temp_files:
-                os.remove(file)
-            self.logger.info("Cleaned up temporary files.")
-        except Exception as e:
-            self.logger.error(f"Error merging temporary files: {e}")

@@ -25,9 +25,7 @@ class CustomScraper(ScraperABC):
             })
             response.raise_for_status()
 
-            # Use URL hash to generate a unique file name
-            file_name = f"{url.split('/')[-1]}.json"
-            return file_name, response.content
+            return 'json', response.content
         except requests.RequestException as e:
             self.logger.error(f"Failed to fetch {url}: {e}")
             raise
