@@ -1,32 +1,76 @@
+"""
+Abstract Base Class for web scrapers in the pipeline.
+
+This module provides the base scraper functionality with robust error handling,
+retry mechanisms with exponential backoff, and multiprocessing capabilities.
+All website-specific scrapers should inherit from this class and implement
+the required abstract methods.
+"""
+
 import logging
 import os
-import random
 import time
 from abc import ABC, abstractmethod
-from typing import Tuple
+from typing import Tuple, List, Dict, Any
 
 import pandas as pd
 from tqdm import tqdm
 
-from core.utils import URL, ScrapeData, run_processes, merge_temp_files, TEMP_FILE, save_temp, \
-    get_backup_urls
+from core.utils import (
+    URL, ScrapeData, run_processes, merge_temp_files, TEMP_FILE,
+    save_temp, get_backup_urls, get_initial_backoff, get_backoff_time
+)
 
 
 class ScraperABC(ABC):
-    def __init__(self, input_path, output_path, temp_dir, backoff_min=1, backoff_max=5, backoff_factor=2,
-                 max_retries=3, sleep_time=2, num_processes=4, checkpoint_time=100):
+    """
+    Abstract base class defining the interface and common functionality for web scrapers.
+
+    This class implements a robust scraping framework with features like:
+    - Exponential backoff retry mechanism
+    - Multiprocessing support
+    - Progress tracking and checkpointing
+    - Error handling and logging
+
+    Attributes:
+        checkpoint_time (int): Number of items to process before saving checkpoint
+        sleep_time (float): Base time to sleep between retries
+        input_path (str): Path to input file containing URLs to scrape
+        output_path (str): Path where scraped data will be saved
+        temp_dir (str): Directory for temporary files
+        max_retries (int): Maximum number of retry attempts
+        backoff_min (float): Minimum initial backoff time in seconds
+        backoff_max (float): Maximum initial backoff time in seconds
+        backoff_factor (float): Multiplicative factor for exponential backoff
+        num_processes (int): Number of parallel scraping processes
+        logger (logging.Logger): Logger instance for this scraper
+    """
+
+    def __init__(self,
+                 input_path: str,
+                 output_path: str,
+                 temp_dir: str,
+                 backoff_min: float = 1,
+                 backoff_max: float = 5,
+                 backoff_factor: float = 2,
+                 max_retries: int = 3,
+                 sleep_time: float = 2,
+                 num_processes: int = 4,
+                 checkpoint_time: int = 100) -> None:
         """
-        Initialize the scraper.
-        :param temp_dir: Directory for storing temporary files.
-        :param sleep_time: Time to sleep between retries.
-        :param input_path: Path to the input parquet file containing URLs.
-        :param output_path: Path where the output parquet file (metadata) will be saved.
-        :param max_retries: Maximum number of retries for failed URLs.
-        :param backoff_min: Minimum initial backoff time in seconds.
-        :param backoff_max: Maximum initial backoff time in seconds.
-        :param backoff_factor: Multiplicative factor for exponential backoff.
-        :param num_processes: Number of parallel processes for scraping.
-        :param checkpoint_time: Saves checkpoint in that steps.
+        Initialize the scraper with configuration parameters.
+
+        Args:
+            input_path: Path to input file containing URLs to scrape
+            output_path: Path where scraped data will be saved
+            temp_dir: Directory for temporary files
+            backoff_min: Minimum initial backoff time in seconds
+            backoff_max: Maximum initial backoff time in seconds
+            backoff_factor: Multiplicative factor for exponential backoff
+            max_retries: Maximum number of retry attempts
+            sleep_time: Base time to sleep between retries
+            num_processes: Number of parallel scraping processes
+            checkpoint_time: Number of items to process before saving checkpoint
         """
         self.checkpoint_time = checkpoint_time
         self.sleep_time = sleep_time
@@ -38,85 +82,123 @@ class ScraperABC(ABC):
         self.backoff_max = backoff_max
         self.backoff_factor = backoff_factor
         self.num_processes = num_processes
+
+        # Create temporary directory if it doesn't exist
         os.makedirs(self.temp_dir, exist_ok=True)
+
+        # Set up logging
         self.logger = logging.getLogger(self.__class__.__name__)
         self.setup_logger()
 
-    def setup_logger(self):
-        logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+    def setup_logger(self) -> None:
+        """Configure logging for the scraper instance."""
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+        )
 
     @abstractmethod
-    def scrape_url(self, url) -> Tuple[str, bytes]:
+    def scrape_url(self, url: str) -> Tuple[str, bytes]:
         """
         Abstract method to scrape a single URL.
-        Must be implemented by subclasses.
+
+        Args:
+            url: URL to scrape
+
+        Returns:
+            Tuple containing:
+                - Content format (e.g., 'html', 'json')
+                - Raw content bytes
+
+        Raises:
+            NotImplementedError: Must be implemented by subclasses
+            Exception: Any scraping-related errors
         """
         pass
 
-    def get_initial_backoff(self):
+    def scrape_with_retries(self, url: str) -> ScrapeData:
         """
-        Generate an initial backoff time between min and max values.
-        :return: Initial backoff time in seconds
-        """
-        return random.uniform(self.backoff_min, self.backoff_max)
+        Attempt to scrape a URL with automatic retries and exponential backoff.
 
-    def get_backoff_time(self, attempt, initial_backoff):
-        """
-        Calculate the backoff time for the current attempt using exponential backoff
-        with jitter.
-        :param attempt: Current attempt number (0-based)
-        :param initial_backoff: Initial backoff time for this URL
-        :return: Time to wait in seconds
-        """
-        # Calculate exponential backoff using the provided initial time
-        backoff = initial_backoff * (self.backoff_factor ** attempt)
+        Args:
+            url: URL to scrape
 
-        # Add jitter (±10% of the calculated backoff)
-        jitter = random.uniform(-0.1 * backoff, 0.1 * backoff)
-        return backoff + jitter
+        Returns:
+            ScrapeData object containing either the scraped content or error information
 
-    def scrape_with_retries(self, url) -> ScrapeData:
+        The method implements exponential backoff with jitter to handle failures gracefully
+        and avoid overwhelming target servers.
+        """
         # Generate initial backoff time for this URL
-        initial_backoff = self.get_initial_backoff()
+        initial_backoff = get_initial_backoff(self.backoff_min, self.backoff_max)
 
         for attempt in range(self.max_retries):
             try:
                 self.logger.info(f"Scraping (Attempt {attempt + 1}/{self.max_retries}): {url}")
                 content_format, file_content = self.scrape_url(url)
-                return ScrapeData(url=url,
-                                  content=file_content,
-                                  content_format=content_format,
-                                  error=None,)
+                return ScrapeData(
+                    url=url,
+                    content=file_content,
+                    content_format=content_format,
+                    error=None
+                )
             except Exception as e:
                 self.logger.error(f"Error scraping {url}: {e}")
-                backoff_time = self.get_backoff_time(attempt, initial_backoff)
+                backoff_time = get_backoff_time(attempt, initial_backoff, self.backoff_factor)
                 self.logger.info(f"Backing off for {backoff_time:.2f} seconds before retry...")
                 time.sleep(backoff_time)
-            self.logger.info(f"Retrying {url}...")
+                self.logger.info(f"Retrying {url}...")
 
         self.logger.warning(f"Failed to scrape {url} after {self.max_retries} attempts.")
-        return ScrapeData(url=url, error="Failed after retries", content=None, content_format=None, )
+        return ScrapeData(
+            url=url,
+            error="Failed after retries",
+            content=None,
+            content_format=None
+        )
 
-    def process_chunk(self, urls, temp_file):
+    def process_chunk(self, urls: List[str], temp_file: str) -> None:
         """
-        Process a chunk of URLs and save the metadata to a temporary file.
+        Process a chunk of URLs and save results to a temporary file.
+
+        Args:
+            urls: List of URLs to process
+            temp_file: Path where temporary results will be saved
+
+        The method tracks progress and saves checkpoints at regular intervals
+        defined by self.checkpoint_time.
         """
-        local_metadata = []
+        local_metadata: List[Dict[str, Any]] = []
         counter = 0
+
         for url in tqdm(urls):
             result = self.scrape_with_retries(url)
             local_metadata.append(result.to_dict())
             counter += 1
+
+            # Save checkpoint if needed
             if counter % self.checkpoint_time == 0:
                 save_temp(local_metadata, temp_file)
                 local_metadata = []
                 self.logger.info(f"Saved checkpoint metadata for chunk to {temp_file}")
+
+        # Save remaining metadata
         save_temp(local_metadata, temp_file)
         self.logger.info(f"Saved metadata for chunk to {temp_file}")
 
-    def run(self):
+    def run(self) -> None:
         """
-        Core scraping logic: read input URLs, scrape data, and save metadata using multiprocessing.
+        Execute the scraping pipeline with all configured parameters.
+
+        This method:
+        1. Loads URLs from input file
+        2. Checks for already processed URLs
+        3. Divides work into chunks for parallel processing
+        4. Processes chunks using multiple processes
+        5. Merges results into final output file
+
+        The method handles both single-process and multi-process scenarios
+        efficiently based on the configuration.
         """
         self.logger.info("Starting scraping...")
         try:
@@ -134,26 +216,39 @@ class ScraperABC(ABC):
             else:
                 self.logger.info(f"With backup we have to scrape {len(urls)} urls!")
 
-            # Get each chunk size
+            # Calculate chunk size for parallel processing
             chunk_size = len(urls) // self.num_processes
             if chunk_size == 0:
                 chunk_size = len(urls)
                 self.num_processes = 1
 
-            # Handle one process
+            # Handle single process case
             if self.num_processes == 1:
                 self.process_chunk(urls, os.path.join(self.temp_dir, TEMP_FILE(0)))
-                merge_temp_files(self.temp_dir,
-                                 self.output_path,
-                                 'Scraper',
-                                 self.logger)
+                merge_temp_files(
+                    self.temp_dir,
+                    self.output_path,
+                    'Scraper',
+                    self.logger
+                )
                 return
 
-            run_processes(urls, chunk_size, self.temp_dir, self.num_processes, self.process_chunk)
-            # Merge temporary files into the final output
-            merge_temp_files(self.temp_dir,
-                             self.output_path,
-                             'Scraper',
-                             self.logger)
+            # Handle multi-process case
+            run_processes(
+                urls,
+                chunk_size,
+                self.temp_dir,
+                self.num_processes,
+                self.process_chunk
+            )
+
+            # Merge all temporary files into final output
+            merge_temp_files(
+                self.temp_dir,
+                self.output_path,
+                'Scraper',
+                self.logger
+            )
+
         except Exception as e:
             self.logger.error(f"Error running scraper: {e}")

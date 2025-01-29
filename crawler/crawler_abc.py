@@ -83,9 +83,18 @@ class CrawlerABC(ABC):
     def fetch_links(self, url) -> Tuple[List[str], List[str]]:
         pass
 
+    def save_temp(self, urls):
+        data = [CrawlData(u).to_dict() for u in urls]
+        temp_file = str(os.path.join(self.temp_dir, TEMP_FILE(0)))
+        pd.DataFrame(data).to_parquet(temp_file, index=False)
+
     def run(self):
         """Start parallel processing with failure tolerance"""
         self.logger.info("Starting crawl...")
+        if os.path.exists(self.output_path):
+            self.logger.info(f"{self.output_path} already exists!")
+            self.logger.info("Crawl completed!")
+            return
         manager = Manager()
         task_queue = manager.Queue()
         urls = manager.list()
@@ -111,7 +120,9 @@ class CrawlerABC(ABC):
 
         if self.num_processes == 1:
             worker_loop(*worker_args)
+            self.save_temp(urls)
             merge_temp_files(self.temp_dir, self.output_path, 'Crawler', self.logger)
+            self.logger.info("Crawl completed!")
             return
 
         processes = []
@@ -130,9 +141,7 @@ class CrawlerABC(ABC):
 
                     if current < len(visited_urls) / self.checkpoint_time:
                         current = len(visited_urls) / self.checkpoint_time
-                        data = [CrawlData(u).to_dict() for u in urls]
-                        temp_file = str(os.path.join(self.temp_dir, TEMP_FILE(0)))
-                        pd.DataFrame(data).to_parquet(temp_file, index=False)
+                        self.save_temp(urls)
 
         except KeyboardInterrupt:
             self.logger.warning("Received interrupt, terminating workers...")
@@ -140,8 +149,6 @@ class CrawlerABC(ABC):
             for p in processes:
                 if p.is_alive():
                     p.terminate()
-            data = [CrawlData(u).to_dict() for u in urls]
-            temp_file = str(os.path.join(self.temp_dir, TEMP_FILE(0)))
-            pd.DataFrame(data).to_parquet(temp_file, index=False)
+            self.save_temp(urls)
             merge_temp_files(self.temp_dir, self.output_path, 'Crawler', self.logger)
-            self.logger.info("Crawl completed.")
+            self.logger.info("Crawl completed!")
