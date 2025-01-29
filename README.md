@@ -1,226 +1,202 @@
-# Scraping Pipeline
+# Web Scraping Pipeline Framework
 
-This repository provides a modular and scalable scraping pipeline designed for efficient web crawling, scraping, and parsing. The pipeline is highly configurable, allowing users to adapt it to different websites by implementing specific methods.
+A robust, modular, and scalable web scraping pipeline designed for efficient data collection and processing. This framework provides a structured approach to crawling, scraping, and parsing web content with built-in support for parallel processing, error handling, and automatic retry mechanisms.
 
----
+## 🌟 Key Features
 
-## Features
+- **Modular Architecture**: Extensible design with abstract base classes for crawlers, scrapers, and parsers
+- **Parallel Processing**: Built-in multiprocessing support for improved performance
+- **Smart Retry Logic**: Exponential backoff with jitter for graceful error handling
+- **Progress Tracking**: Automatic checkpointing and progress monitoring
+- **Flexible Configuration**: YAML-based configuration for easy customization
+- **Robust Error Handling**: Comprehensive error handling and logging throughout the pipeline
+- **Type Safety**: Full type hints support for better code reliability
+- **Recovery Mechanism**: Automatic recovery from interruptions
 
-- **Modular Design**: Abstract base classes for crawlers, scrapers, and parsers ensure easy customization.
-- **Configurable Pipeline**: Define your workflow in a YAML configuration file.
-- **Multiprocessing**: Leverage multiprocessing for improved performance.
-- **Checkpointing and Recovery**: Save progress periodically to avoid redundant processing.
-- **Dynamic Imports**: Add new websites easily by implementing site-specific logic.
-- **Smart Retry Handling**: Exponential backoff with randomization for failed requests.
-
----
-
-## Table of Contents
-
-1. [Getting Started](#getting-started)
-2. [Repository Structure](#repository-structure)
-3. [Pipeline Configuration](#pipeline-configuration)
-4. [Usage](#usage)
-5. [Retry and Backoff Strategy](#retry-and-backoff-strategy)
-6. [Customizing for New Websites](#customizing-for-new-websites)
-7. [Logging](#logging)
-8. [License](#license)
-
----
-
-## Getting Started
-
-### Prerequisites
+## 📋 Prerequisites
 
 - Python 3.8+
-- Install dependencies using:
+- Dependencies from `requirements.txt`
+- [html-to-markdown](https://github.com/JohannesKaufmann/html-to-markdown) - Required for HTML content conversion:
+  ```bash
+  go get github.com/JohannesKaufmann/html-to-markdown
+  ```
+  Make sure the `html2markdown` binary is available in your system PATH.
 
+## 🚀 Quick Start
+
+1. Install dependencies:
 ```bash
 pip install -r requirements.txt
 ```
 
----
-
-## Repository Structure
-
-```plaintext
-.
-├── crawler/
-│   ├── crawler_abc.py       # Abstract base class for crawlers
-│   ├── bpn.py               # Crawler implementation for the `bpn` website
-├── parser/
-│   ├── parser_abc.py        # Abstract base class for parsers
-│   ├── bpn.py               # Parser implementation for the `bpn` website
-├── scraper/
-│   ├── scraper_abc.py       # Abstract base class for scrapers
-│   ├── bpn.py               # Scraper implementation for the `bpn` website
-├── runner.py                # Main pipeline runner script
-├── pipeline_config.yml      # Sample pipeline configuration file
-└── README.md                # Project documentation (this file)
-```
-
----
-
-## Pipeline Configuration
-
-The pipeline workflow is defined in `pipeline_config.yml`. It specifies the website, steps, and their configurations.
-
-### Example Configuration
-
+2. Create a configuration file (e.g., `pipeline_config.yml`):
 ```yaml
 pipeline:
-  website: bpn
+  website: example_site
   steps:
     - name: Crawler
-      input: null
-      output: bpn_crawled_urls.parquet
+      output: crawled_urls.parquet
       config:
         start_urls:
-          - "https://www.bpn.ge/api/article/1"
+          - "https://example.com/start"
         max_retries: 3
-        time_sleep: 2
-        temp_dir: "crawler/"
-        num_processes: 1
+        num_processes: 4
 
     - name: Scraper
-      input: bpn_crawled_urls.parquet
-      output: bpn_scraped_metadata.parquet
+      input: crawled_urls.parquet
+      output: scraped_content.parquet
       config:
-        raw_data_dir: "bpn_raw_data/"
         temp_dir: "scraper/"
         max_retries: 5
-        backoff_min: 1  # Minimum initial backoff time in seconds
-        backoff_max: 5  # Maximum initial backoff time in seconds
-        backoff_factor: 2  # Multiplicative factor for exponential backoff
-        num_processes: 11
-        checkpoint_time: 100
+        num_processes: 4
 
     - name: Parser
-      input: bpn_scraped_metadata.parquet
-      output: bpn_parsed_data.parquet
+      input: scraped_content.parquet
+      output: parsed_data.parquet
       config:
-        raw_data_dir: "bpn_raw_data/"
+        raw_data_dir: "raw_data/"
         temp_dir: "parser/"
-        num_processes: 64
+        num_processes: 4
 ```
 
----
+3. Run the pipeline:
+```bash
+python runner.py --config pipeline_config.yml
+```
 
-## Retry and Backoff Strategy
+## 🏗 Project Structure
 
-The scraper implements a sophisticated retry mechanism with exponential backoff to handle failures gracefully and avoid overwhelming target servers.
+```
+.
+├── core/
+│   ├── __init__.py
+│   └── utils.py              # Core utilities and helper functions
+├── crawler/
+│   ├── __init__.py
+│   ├── crawler_abc.py        # Abstract base class for crawlers
+│   └── <website>.py         # Website-specific crawler implementations
+├── scraper/
+│   ├── __init__.py
+│   ├── scraper_abc.py       # Abstract base class for scrapers
+│   └── <website>.py         # Website-specific scraper implementations
+├── parser/
+│   ├── __init__.py
+│   ├── parser_abc.py        # Abstract base class for parsers
+│   └── <website>.py         # Website-specific parser implementations
+├── runner.py                # Main pipeline execution script
+├── pipeline_config.yml      # Pipeline configuration file
+└── requirements.txt         # Project dependencies
+```
 
-### Configuration Parameters
+## 📊 Pipeline Stages
 
-- `max_retries`: Maximum number of retry attempts for failed requests
-- `backoff_min`: Minimum initial backoff time in seconds
-- `backoff_max`: Maximum initial backoff time in seconds
-- `backoff_factor`: Multiplicative factor for exponential backoff
+### 1. Crawler
+- Discovers and collects URLs following site-specific patterns
+- Manages URL deduplication and crawling depth
+- Supports parallel processing for faster URL discovery
+- Configuration parameters:
+  - `start_urls`: Initial URLs to begin crawling
+  - `max_retries`: Maximum retry attempts for failed requests
+  - `num_processes`: Number of parallel crawling processes
+  - `time_sleep`: Delay between requests
+  - `checkpoint_time`: Frequency of progress saves
 
-### How it Works
+### 2. Scraper
+- Downloads content from discovered URLs
+- Implements smart retry logic with exponential backoff
+- Handles rate limiting and server load management
+- Configuration parameters:
+  - `backoff_min`: Minimum retry delay
+  - `backoff_max`: Maximum retry delay
+  - `backoff_factor`: Exponential growth factor
+  - `max_retries`: Maximum retry attempts
+  - `num_processes`: Parallel scraping processes
 
-1. **Initial Backoff**: When a request fails, the scraper generates a random initial backoff time between `backoff_min` and `backoff_max` seconds.
+### 3. Parser
+- Extracts structured data from downloaded content
+- Supports multiple output formats
+- Handles various content types and structures
+- Configuration parameters:
+  - `raw_data_dir`: Directory for storing raw content
+  - `temp_dir`: Directory for temporary files
+  - `num_processes`: Parallel parsing processes
+  - `checkpoint_time`: Checkpoint frequency
 
-2. **Exponential Growth**: For each subsequent retry:
-   - The wait time increases exponentially: `initial_backoff * (backoff_factor ^ attempt_number)`
-   - A small amount of jitter (±10%) is added to prevent synchronized retries
+## 🔄 Retry Strategy
 
-3. **Example Sequence**:
-   For `backoff_min=1`, `backoff_max=5`, `backoff_factor=2`:
-   - Initial attempt fails → Wait random time between 1-5 seconds
-   - If initial backoff was 2 seconds:
-     - Retry 1: Wait ~2 seconds (± jitter)
-     - Retry 2: Wait ~4 seconds (± jitter)
-     - Retry 3: Wait ~8 seconds (± jitter)
+The framework implements a sophisticated retry mechanism with exponential backoff and jitter:
 
-This strategy provides several benefits:
-- Prevents overwhelming servers during retries
-- Adds randomization to avoid thundering herd problems
-- Maintains consistent backoff progression per URL
-- Allows fine-tuning through configuration
+1. Initial retry delay is randomized between `backoff_min` and `backoff_max`
+2. Subsequent retries increase exponentially: `delay * (backoff_factor ^ attempt)`
+3. Random jitter (±10%) prevents thundering herd problems
+4. Per-URL consistent backoff progression
 
----
+Example sequence for `backoff_min=1`, `backoff_max=5`, `backoff_factor=2`:
+```
+Initial failure → Random delay 1-5s
+Retry 1 → Initial delay * 2 (± jitter)
+Retry 2 → Initial delay * 4 (± jitter)
+Retry 3 → Initial delay * 8 (± jitter)
+```
 
-## Customizing for New Websites
+## 🔧 Adding New Websites
 
-### Adding a New Website
+1. Create website-specific implementations:
+   - `crawler/<website>.py`
+   - `scraper/<website>.py`
+   - `parser/<website>.py`
 
-For each new website, implement the following files:
-
-1. **Crawler**:
-   - Create a new file `crawler/<website>.py`.
-   - Implement the `fetch_links` method in a class inheriting from `CrawlerABC`.
-
-   Example:
+2. Implement required abstract methods:
    ```python
+   # crawler/<website>.py
    from crawler.crawler_abc import CrawlerABC
 
    class CustomCrawler(CrawlerABC):
-       def fetch_links(self, links):
-           if type(links) == str:
-               links = [links]
-           if 135031 < int(links[0].split('/')[-1]) + 1:
-               return []
-           return ['/'.join(i.split('/')[:-1]) + '/' + str(int(i.split('/')[-1]) + 1) for i in links]
-   ```
+       def fetch_links(self, url):
+           # Implement URL discovery logic
+           return new_urls_to_crawl, content_urls_found
 
-2. **Scraper**:
-   - Create a new file `scraper/<website>.py`.
-   - Implement the `scrape_url` method in a class inheriting from `ScraperABC`.
-
-   Example:
-   ```python
-   import requests
+   # scraper/<website>.py
    from scraper.scraper_abc import ScraperABC
 
    class CustomScraper(ScraperABC):
        def scrape_url(self, url):
-           response = requests.get(url)
-           response.raise_for_status()
-           file_name = f"{url.split('/')[-1]}.json"
-           return file_name, response.content
-   ```
+           # Implement content download logic
+           return content_format, content_bytes
 
-3. **Parser**:
-   - Create a new file `parser/<website>.py`.
-   - Implement the `parse_file` method in a class inheriting from `ParserABC`.
-
-   Example:
-   ```python
-   import json
+   # parser/<website>.py
    from parser.parser_abc import ParserABC
 
    class CustomParser(ParserABC):
-       def parse_file(self, file_path, metadata):
-           with open(file_path, "r") as f:
-               data = json.load(f)
-           return {
-               "url": metadata["url"],
-               "title": data["title"],
-               "content": data["fulltext"]
-           }
+       def parse_file(self, data):
+           # Implement content parsing logic
+           return parsed_data_dict
    ```
 
-### Updating Configuration
+3. Update configuration to use the new website:
+   ```yaml
+   pipeline:
+     website: your_new_website
+     steps:
+       ...
+   ```
 
-Update `pipeline_config.yml` to use the new website by setting the `website` field and modifying the steps if necessary.
+## 📝 Logging
 
----
+The framework provides comprehensive logging at each stage:
 
-## Logging
-
-Logs are generated at each step of the pipeline and include detailed information about progress and errors.
-
-Example log format:
-
-```plaintext
-2025-01-22 12:00:00 - CrawlerABC - INFO - Starting crawl...
-2025-01-22 12:01:00 - ScraperABC - ERROR - Failed to fetch URL: https://example.com
-2025-01-22 12:01:00 - ScraperABC - INFO - Backing off for 2.35 seconds before retry...
+```
+2025-01-29 10:00:00 - CrawlerABC - INFO - Starting crawl...
+2025-01-29 10:00:01 - CrawlerABC - INFO - Progress: 100 URLs discovered
+2025-01-29 10:00:02 - ScraperABC - WARNING - Retry attempt 1 for https://example.com
+2025-01-29 10:00:03 - ParserABC - INFO - Successfully parsed 50 documents
 ```
 
----
+## 🤝 Contributing
 
-## License
+Contributions are welcome! Please feel free to submit pull requests.
 
-This project is licensed under the MIT License. See `LICENSE` for details.
+## 📄 License
+
+This project is licensed under the MIT License. See the `LICENSE` file for details.

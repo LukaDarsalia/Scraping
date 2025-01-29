@@ -1,122 +1,327 @@
+"""
+Abstract Base Class for web crawlers in the pipeline.
+
+This module provides the base crawler functionality with features like:
+- Parallel processing with worker pools
+- URL deduplication
+- Progress tracking
+- Exponential backoff retry mechanism
+- Checkpointing and recovery
+
+All website-specific crawlers should inherit from this class and implement
+the required abstract methods.
+"""
+
+import logging
+import multiprocessing
+import os
 import time
 from abc import ABC, abstractmethod
-import os
-from typing import Tuple, List
+from multiprocessing import Manager, Lock, Value, Queue
+from queue import Empty
+from typing import Tuple, List, Dict
 
 import pandas as pd
-import logging
-from multiprocessing import Pool
 
-from core.utils import merge_temp_files, CrawlData, TEMP_FILE
+from core.utils import (
+    merge_temp_files, CrawlData, TEMP_FILE,
+    get_initial_backoff, get_backoff_time
+)
+
+
+def worker_loop(
+        crawler: 'CrawlerABC',
+        task_queue: Queue,
+        urls: List[str],
+        visited_urls: Dict[str, bool],
+        active_workers: Value,
+        lock: Lock,
+        backoff_min: float,
+        backoff_max: float,
+        backoff_factor: float,
+        max_retries: int
+) -> None:
+    """
+    Worker function for parallel URL crawling.
+
+    This function runs in a separate process and continuously processes URLs
+    from the task queue until termination conditions are met.
+
+    Args:
+        crawler: Instance of CrawlerABC subclass
+        task_queue: Queue containing URLs to process
+        urls: Shared list for storing discovered URLs
+        visited_urls: Shared dictionary tracking processed URLs
+        active_workers: Shared counter of active workers
+        lock: Lock for synchronizing access to shared resources
+        backoff_min: Minimum initial backoff time in seconds
+        backoff_max: Maximum initial backoff time in seconds
+        backoff_factor: Multiplicative factor for exponential backoff
+        max_retries: Maximum number of retry attempts per URL
+
+    The function implements exponential backoff with jitter for failed requests
+    and uses locks to safely manage shared resources across processes.
+    """
+    while True:
+        with lock:
+            # First check termination condition
+            if task_queue.empty() and active_workers.value == 0:
+                break
+
+            # Atomic queue access + worker count update
+            try:
+                url = task_queue.get_nowait()
+                active_workers.value += 1  # Increment INSIDE lock
+            except Empty:
+                url = None
+
+        if url is None:
+            time.sleep(0.1)
+            continue
+
+        initial_backoff = get_initial_backoff(backoff_min, backoff_max)
+
+        for attempt in range(max_retries + 1):
+            try:
+                # Fetch new URLs from current URL
+                key_urls, value_urls = crawler.fetch_links(url)
+
+                with lock:
+                    # Add new URLs to queue if not visited
+                    for new_url in key_urls:
+                        if new_url not in visited_urls:
+                            task_queue.put(new_url)
+                            visited_urls[new_url] = True
+                    urls.extend(value_urls)
+                    break
+
+            except Exception as e:
+                crawler.logger.error(
+                    f"Crawling attempt {attempt + 1}/{max_retries} failed for {url}: {str(e)}"
+                )
+                backoff_time = get_backoff_time(attempt, initial_backoff, backoff_factor)
+                crawler.logger.info(f"Backing off for {backoff_time:.2f} seconds before retry...")
+                time.sleep(backoff_time)
+                crawler.logger.info(f"Retrying {url}...")
+
+        with lock:
+            active_workers.value -= 1
 
 
 class CrawlerABC(ABC):
     """
-    Abstract base class for a web crawler.
-    All custom crawlers must inherit from this class and implement the required methods.
+    Abstract base class defining the interface and common functionality for web crawlers.
+
+    This class implements a crawler framework with features like:
+    - Parallel processing with worker pools
+    - URL deduplication
+    - Progress tracking
+    - Exponential backoff retry mechanism
+    - Checkpointing and recovery
+
+    Attributes:
+        start_urls (List[str]): Initial URLs to start crawling from
+        output_path (str): Path where crawled URLs will be saved
+        temp_dir (str): Directory for temporary files
+        backoff_min (float): Minimum initial backoff time in seconds
+        backoff_max (float): Maximum initial backoff time in seconds
+        backoff_factor (float): Multiplicative factor for exponential backoff
+        max_retries (int): Maximum number of retry attempts
+        num_processes (int): Number of parallel crawling processes
+        checkpoint_time (int): Number of items to process before saving checkpoint
     """
 
-    def __init__(self, start_urls, output_path, temp_dir, max_retries=3, time_sleep=3, num_processes=4):
+    def __init__(self,
+                 start_urls: List[str],
+                 output_path: str,
+                 temp_dir: str,
+                 backoff_min: float = 1,
+                 backoff_max: float = 5,
+                 backoff_factor: float = 2,
+                 max_retries: int = 3,
+                 num_processes: int = 4,
+                 checkpoint_time: int = 100) -> None:
         """
-        Initialize the crawler.
-        :param start_urls: List of URLs to start crawling from.
-        :param output_path: Path where the output parquet file will be saved.
-        :param temp_dir: Directory for storing temporary files.
-        :param max_retries: Maximum number of retries for failed URLs.
-        :param time_sleep: Time to sleep between retries.
-        :param num_processes: Number of parallel processes for crawling.
+        Initialize the crawler with configuration parameters.
+
+        Args:
+            start_urls: List of URLs to start crawling from
+            output_path: Path where crawled URLs will be saved
+            temp_dir: Directory for temporary files
+            backoff_min: Minimum initial backoff time in seconds
+            backoff_max: Maximum initial backoff time in seconds
+            backoff_factor: Multiplicative factor for exponential backoff
+            max_retries: Maximum number of retry attempts
+            num_processes: Number of parallel crawling processes
+            checkpoint_time: Number of items to process before saving checkpoint
         """
         self.start_urls = start_urls
         self.output_path = output_path
         self.temp_dir = temp_dir
+        self.backoff_min = backoff_min
+        self.backoff_max = backoff_max
+        self.backoff_factor = backoff_factor
         self.max_retries = max_retries
-        self.time_sleep = time_sleep
         self.num_processes = num_processes
-        self.visited_urls = set()
+        self.checkpoint_time = checkpoint_time
+
+        # Create temporary directory if it doesn't exist
         os.makedirs(self.temp_dir, exist_ok=True)
-        self.logger = logging.getLogger(self.__class__.__name__)
         self.setup_logger()
 
-    def setup_logger(self):
-        """Set up logging for the crawler."""
-        logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+    def setup_logger(self) -> None:
+        """
+        Configure logging for the crawler instance.
+
+        Sets up a logger with appropriate format and handlers if they don't exist.
+        """
+        logger = logging.getLogger(self.__class__.__name__)
+        logger.setLevel(logging.INFO)
+        if not logger.handlers:
+            handler = logging.StreamHandler()
+            formatter = logging.Formatter(
+                "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+            )
+            handler.setFormatter(formatter)
+            logger.addHandler(handler)
+            logger.propagate = False
+
+    @property
+    def logger(self) -> logging.Logger:
+        """Get the logger instance for this crawler."""
+        return logging.getLogger(self.__class__.__name__)
 
     @abstractmethod
-    def fetch_links(self, url) -> Tuple[List[str], List[str]]:
+    def fetch_links(self, url: str) -> Tuple[List[str], List[str]]:
         """
-        Abstract method to fetch links from a given URL.
-        Must be implemented by subclasses.
-        :param url: URL to crawl.
-        :return: List of URLs found on the page.
+        Abstract method to fetch and process links from a given URL.
+
+        Args:
+            url: URL to fetch links from
+
+        Returns:
+            Tuple containing:
+                - List of URLs to be added to the crawling queue
+                - List of URLs to be saved as discovered content URLs
+
+        Raises:
+            NotImplementedError: Must be implemented by subclasses
+            Exception: Any crawling-related errors should be handled by implementation
         """
         pass
 
-    def fetch_links_with_retries(self, url) -> Tuple[List[str], List[str]]:
+    def save_temp(self, urls: List[str]) -> None:
         """
-        Fetch links from a URL with retry logic.
-        :param url: URL to crawl.
-        :return: List of URLs found on the page, or an empty list if all retries fail.
+        Save list of URLs to a temporary file.
+
+        Args:
+            urls: List of URLs to save
         """
-        for attempt in range(self.max_retries):
-            try:
-                self.logger.info(f"Fetching links (Attempt {attempt + 1}/{self.max_retries}): {url}")
-                return self.fetch_links(url)
-            except Exception as e:
-                self.logger.error(f"Error fetching links from {url}: {e}")
-                time.sleep(self.time_sleep)
-            self.logger.info(f"Retrying {url}...")
+        data = [CrawlData(u).to_dict() for u in urls]
+        temp_file = str(os.path.join(self.temp_dir, TEMP_FILE(0)))
+        pd.DataFrame(data).to_parquet(temp_file, index=False)
 
-        self.logger.warning(f"Failed to fetch links from {url} after {self.max_retries} attempts.")
-        return [], []
-
-    def process_chunk(self, chunk, temp_file):
+    def run(self) -> None:
         """
-        Process a chunk of URLs and save the results to a temporary file.
-        :param chunk: List of URLs to crawl.
-        :param temp_file: Path to the temporary file for storing results.
-        """
-        local_urls = []
-        queue = list(chunk)
+        Execute the crawling pipeline with parallel processing and failure tolerance.
 
-        while queue:
-            url = queue.pop(0)
-            if url in self.visited_urls:
-                continue
+        This method:
+        1. Sets up shared resources for parallel processing
+        2. Initializes worker processes
+        3. Monitors progress and handles checkpointing
+        4. Manages graceful shutdown
+        5. Merges results into final output
 
-            self.logger.info(f"Crawling: {url}")
-            try:
-                key_urls, value_urls = self.fetch_links_with_retries(url)
-
-                local_urls.extend([CrawlData(url).to_dict() for url in value_urls])
-                queue.extend(key_urls)
-                self.visited_urls.add(url)
-            except Exception as e:
-                self.logger.error(f"Unexpected error crawling {url}: {e}")
-
-        # Save the results for this chunk
-        pd.DataFrame(local_urls).to_parquet(temp_file, index=False)
-        self.logger.info(f"Saved chunk results to {temp_file}")
-
-    def run(self):
-        """
-        Entry point to start the crawler using multiprocessing.
+        The method includes proper error handling and cleanup, even in case
+        of interruption.
         """
         self.logger.info("Starting crawl...")
+
+        # Check if output already exists
+        if os.path.exists(self.output_path):
+            self.logger.info(f"{self.output_path} already exists!")
+            self.logger.info("Crawl completed!")
+            return
+
+        # Initialize shared resources
+        manager = Manager()
+        task_queue: Queue = manager.Queue()
+        urls: List[str] = manager.list()
+        visited_urls: Dict[str, bool] = manager.dict()
+        active_workers: Value = manager.Value('i', 0)
+        lock: Lock = manager.Lock()
+
+        # Initialize task queue with start URLs
+        for url in self.start_urls:
+            task_queue.put(url)
+
+        # Prepare worker arguments
+        worker_args = (
+            self,
+            task_queue,
+            urls,
+            visited_urls,
+            active_workers,
+            lock,
+            self.backoff_min,
+            self.backoff_max,
+            self.backoff_factor,
+            self.max_retries,
+        )
+
+        # Handle single process case
+        if self.num_processes == 1:
+            worker_loop(*worker_args)
+            self.save_temp(urls)
+            merge_temp_files(
+                self.temp_dir,
+                self.output_path,
+                'Crawler',
+                self.logger
+            )
+            self.logger.info("Crawl completed!")
+            return
+
+        # Handle multi-process case
+        processes = []
         try:
-            # Split the start URLs into chunks
-            chunk_size = max(1, len(self.start_urls) // self.num_processes)
-            url_chunks = [self.start_urls[i:i + chunk_size] for i in range(0, len(self.start_urls), chunk_size)]
-            temp_files = [os.path.join(self.temp_dir, TEMP_FILE(i)) for i in range(len(url_chunks))]
+            current = 0
+            # Start worker processes
+            for _ in range(self.num_processes):
+                p = multiprocessing.Process(target=worker_loop, args=worker_args)
+                p.start()
+                processes.append(p)
 
-            # Use multiprocessing to process each chunk
-            with Pool(self.num_processes) as pool:
-                pool.starmap(self.process_chunk, zip(url_chunks, temp_files))
+            # Monitor progress and handle checkpointing
+            while any(p.is_alive() for p in processes):
+                time.sleep(1)
+                with lock:
+                    qsize = task_queue.qsize()
+                    self.logger.info(
+                        f"Progress: {len(visited_urls)} processed, "
+                        f"{len(urls)} fetched urls {qsize} queued, "
+                        f"{active_workers.value} active workers"
+                    )
 
-            # Merge all temporary files into the final output
-            merge_temp_files(self.temp_dir,
-                             self.output_path,
-                             'Crawler',
-                             self.logger)
-        except Exception as e:
-            self.logger.error(f"Error during crawl: {e}")
+                    # Save checkpoint if needed
+                    if current < len(visited_urls) / self.checkpoint_time:
+                        current = len(visited_urls) / self.checkpoint_time
+                        self.save_temp(urls)
 
+        except KeyboardInterrupt:
+            self.logger.warning("Received interrupt, terminating workers...")
+        finally:
+            # Clean up processes
+            for p in processes:
+                if p.is_alive():
+                    p.terminate()
+
+            # Save final results
+            self.save_temp(urls)
+            merge_temp_files(
+                self.temp_dir,
+                self.output_path,
+                'Crawler',
+                self.logger
+            )
+            self.logger.info("Crawl completed!")

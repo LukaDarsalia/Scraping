@@ -6,11 +6,14 @@ pipeline:
       output: rustavi2_crawled_urls.parquet
       config:
         start_urls:
-          - "https://rustavi2.ge/ka/news/302898"
+          - "https://rustavi2.ge/ka/news/302888"
         max_retries: 3
-        time_sleep: 2
+        backoff_min: 1
+        backoff_max: 5
+        backoff_factor: 2
         temp_dir: "crawler/"
-        num_processes: 1
+        num_processes: 10
+        checkpoint_time: 100
 
     - name: Scraper
       input: rustavi2_crawled_urls.parquet
@@ -18,12 +21,11 @@ pipeline:
       config:
         temp_dir: "scraper/"
         max_retries: 3
-        sleep_time: 5
         num_processes: 2
         backoff_min: 1
         backoff_max: 5
         backoff_factor: 2
-        checkpoint_time: 2
+        checkpoint_time: 100
 
     - name: Parser
       input: rustavi2_scraped_metadata.parquet
@@ -32,4 +34,4 @@ pipeline:
         raw_data_dir: "rustavi2_raw_data/"
         temp_dir: "parser/"
         num_processes: 2
-        checkpoint_time: 2
+        checkpoint_time: 100
