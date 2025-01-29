@@ -7,15 +7,13 @@ All website-specific parsers should inherit from this class and implement
 the required abstract methods.
 """
 
-import datetime
 import logging
 import os
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
-from typing import Optional, List, Dict, Any, Union
-from tqdm import tqdm
+from typing import List, Dict, Any, Union
 
 import pandas as pd
+from tqdm import tqdm
 
 from core.utils import (
     run_processes, merge_temp_files, TEMP_FILE, ERROR,

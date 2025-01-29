@@ -34,7 +34,6 @@ class ScraperABC(ABC):
 
     Attributes:
         checkpoint_time (int): Number of items to process before saving checkpoint
-        sleep_time (float): Base time to sleep between retries
         input_path (str): Path to input file containing URLs to scrape
         output_path (str): Path where scraped data will be saved
         temp_dir (str): Directory for temporary files
@@ -54,7 +53,6 @@ class ScraperABC(ABC):
                  backoff_max: float = 5,
                  backoff_factor: float = 2,
                  max_retries: int = 3,
-                 sleep_time: float = 2,
                  num_processes: int = 4,
                  checkpoint_time: int = 100) -> None:
         """
@@ -68,12 +66,10 @@ class ScraperABC(ABC):
             backoff_max: Maximum initial backoff time in seconds
             backoff_factor: Multiplicative factor for exponential backoff
             max_retries: Maximum number of retry attempts
-            sleep_time: Base time to sleep between retries
             num_processes: Number of parallel scraping processes
             checkpoint_time: Number of items to process before saving checkpoint
         """
         self.checkpoint_time = checkpoint_time
-        self.sleep_time = sleep_time
         self.input_path = input_path
         self.output_path = output_path
         self.temp_dir = temp_dir

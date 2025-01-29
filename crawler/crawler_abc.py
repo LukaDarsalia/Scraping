@@ -127,7 +127,6 @@ class CrawlerABC(ABC):
         backoff_max (float): Maximum initial backoff time in seconds
         backoff_factor (float): Multiplicative factor for exponential backoff
         max_retries (int): Maximum number of retry attempts
-        time_sleep (float): Base time to sleep between retries
         num_processes (int): Number of parallel crawling processes
         checkpoint_time (int): Number of items to process before saving checkpoint
     """
@@ -140,7 +139,6 @@ class CrawlerABC(ABC):
                  backoff_max: float = 5,
                  backoff_factor: float = 2,
                  max_retries: int = 3,
-                 time_sleep: float = 3,
                  num_processes: int = 4,
                  checkpoint_time: int = 100) -> None:
         """
@@ -154,7 +152,6 @@ class CrawlerABC(ABC):
             backoff_max: Maximum initial backoff time in seconds
             backoff_factor: Multiplicative factor for exponential backoff
             max_retries: Maximum number of retry attempts
-            time_sleep: Base time to sleep between retries
             num_processes: Number of parallel crawling processes
             checkpoint_time: Number of items to process before saving checkpoint
         """
@@ -165,7 +162,6 @@ class CrawlerABC(ABC):
         self.backoff_max = backoff_max
         self.backoff_factor = backoff_factor
         self.max_retries = max_retries
-        self.time_sleep = time_sleep
         self.num_processes = num_processes
         self.checkpoint_time = checkpoint_time
 

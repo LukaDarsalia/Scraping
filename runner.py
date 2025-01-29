@@ -157,7 +157,6 @@ class PipelineRunner:
             backoff_max=config.get("backoff_max", 5),
             backoff_factor=config.get("backoff_factor", 2),
             max_retries=config["max_retries"],
-            time_sleep=config["time_sleep"],
             num_processes=config["num_processes"],
             checkpoint_time=config.get("checkpoint_time", 100)
         )
