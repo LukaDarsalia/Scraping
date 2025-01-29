@@ -6,11 +6,12 @@ pipeline:
       output: rustavi2_crawled_urls.parquet
       config:
         start_urls:
-          - "https://rustavi2.ge/ka/news/302898"
+          - "https://rustavi2.ge/ka/news/302888"
         max_retries: 3
         time_sleep: 2
         temp_dir: "crawler/"
-        num_processes: 1
+        num_processes: 10
+        checkpoint_time: 4
 
     - name: Scraper
       input: rustavi2_crawled_urls.parquet

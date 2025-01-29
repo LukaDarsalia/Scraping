@@ -1,122 +1,147 @@
+import multiprocessing
 import time
-from abc import ABC, abstractmethod
 import os
-from typing import Tuple, List
-
+from abc import ABC, abstractmethod
+from multiprocessing import Manager, Lock
+from queue import Empty
 import pandas as pd
 import logging
-from multiprocessing import Pool
+from typing import Tuple, List
 
-from core.utils import merge_temp_files, CrawlData, TEMP_FILE
+from core.utils import merge_temp_files, CrawlData, TEMP_FILE, get_initial_backoff, get_backoff_time
+
+
+def worker_loop(crawler, task_queue, urls, visited_urls, active_workers, lock, backoff_min, backoff_max, backoff_factor, max_retries):
+    while True:
+        with lock:
+            # First check termination condition
+            if task_queue.empty() and active_workers.value == 0:
+                break
+
+            # Atomic queue access + worker count update
+            try:
+                url = task_queue.get_nowait()
+                active_workers.value += 1  # Increment INSIDE lock
+            except Empty:
+                url = None
+
+        if url is None:
+            time.sleep(0.1)
+            continue
+
+        initial_backoff = get_initial_backoff(backoff_min, backoff_max)
+        for attempt in range(max_retries + 1):
+            try:
+                key_urls, value_urls = crawler.fetch_links(url)
+                with lock:
+                    for new_url in key_urls:
+                        if new_url not in visited_urls:
+                            task_queue.put(new_url)
+                            visited_urls[new_url] = True
+                    urls.extend(value_urls)
+                    break
+            except Exception as e:
+                crawler.logger.error(f"Crawling attempt {attempt + 1}/{max_retries} failed for {url}: {str(e)}")
+                backoff_time = get_backoff_time(attempt, initial_backoff, backoff_factor)
+                crawler.logger.info(f"Backing off for {backoff_time:.2f} seconds before retry...")
+                time.sleep(backoff_time)
+
+        with lock:
+            active_workers.value -= 1
 
 
 class CrawlerABC(ABC):
-    """
-    Abstract base class for a web crawler.
-    All custom crawlers must inherit from this class and implement the required methods.
-    """
-
-    def __init__(self, start_urls, output_path, temp_dir, max_retries=3, time_sleep=3, num_processes=4):
-        """
-        Initialize the crawler.
-        :param start_urls: List of URLs to start crawling from.
-        :param output_path: Path where the output parquet file will be saved.
-        :param temp_dir: Directory for storing temporary files.
-        :param max_retries: Maximum number of retries for failed URLs.
-        :param time_sleep: Time to sleep between retries.
-        :param num_processes: Number of parallel processes for crawling.
-        """
+    def __init__(self, start_urls, output_path, temp_dir, backoff_min=1, backoff_max=5, backoff_factor=2, max_retries=3, time_sleep=3, num_processes=4, checkpoint_time=100):
         self.start_urls = start_urls
         self.output_path = output_path
         self.temp_dir = temp_dir
+        self.backoff_min = backoff_min
+        self.backoff_max = backoff_max
+        self.backoff_factor = backoff_factor
         self.max_retries = max_retries
         self.time_sleep = time_sleep
         self.num_processes = num_processes
-        self.visited_urls = set()
+        self.checkpoint_time = checkpoint_time
         os.makedirs(self.temp_dir, exist_ok=True)
-        self.logger = logging.getLogger(self.__class__.__name__)
         self.setup_logger()
 
     def setup_logger(self):
-        """Set up logging for the crawler."""
-        logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+        logger = logging.getLogger(self.__class__.__name__)
+        logger.setLevel(logging.INFO)
+        if not logger.handlers:
+            handler = logging.StreamHandler()
+            formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+            handler.setFormatter(formatter)
+            logger.addHandler(handler)
+            logger.propagate = False
+
+    @property
+    def logger(self):
+        return logging.getLogger(self.__class__.__name__)
 
     @abstractmethod
     def fetch_links(self, url) -> Tuple[List[str], List[str]]:
-        """
-        Abstract method to fetch links from a given URL.
-        Must be implemented by subclasses.
-        :param url: URL to crawl.
-        :return: List of URLs found on the page.
-        """
         pass
 
-    def fetch_links_with_retries(self, url) -> Tuple[List[str], List[str]]:
-        """
-        Fetch links from a URL with retry logic.
-        :param url: URL to crawl.
-        :return: List of URLs found on the page, or an empty list if all retries fail.
-        """
-        for attempt in range(self.max_retries):
-            try:
-                self.logger.info(f"Fetching links (Attempt {attempt + 1}/{self.max_retries}): {url}")
-                return self.fetch_links(url)
-            except Exception as e:
-                self.logger.error(f"Error fetching links from {url}: {e}")
-                time.sleep(self.time_sleep)
-            self.logger.info(f"Retrying {url}...")
-
-        self.logger.warning(f"Failed to fetch links from {url} after {self.max_retries} attempts.")
-        return [], []
-
-    def process_chunk(self, chunk, temp_file):
-        """
-        Process a chunk of URLs and save the results to a temporary file.
-        :param chunk: List of URLs to crawl.
-        :param temp_file: Path to the temporary file for storing results.
-        """
-        local_urls = []
-        queue = list(chunk)
-
-        while queue:
-            url = queue.pop(0)
-            if url in self.visited_urls:
-                continue
-
-            self.logger.info(f"Crawling: {url}")
-            try:
-                key_urls, value_urls = self.fetch_links_with_retries(url)
-
-                local_urls.extend([CrawlData(url).to_dict() for url in value_urls])
-                queue.extend(key_urls)
-                self.visited_urls.add(url)
-            except Exception as e:
-                self.logger.error(f"Unexpected error crawling {url}: {e}")
-
-        # Save the results for this chunk
-        pd.DataFrame(local_urls).to_parquet(temp_file, index=False)
-        self.logger.info(f"Saved chunk results to {temp_file}")
-
     def run(self):
-        """
-        Entry point to start the crawler using multiprocessing.
-        """
+        """Start parallel processing with failure tolerance"""
         self.logger.info("Starting crawl...")
+        manager = Manager()
+        task_queue = manager.Queue()
+        urls = manager.list()
+        visited_urls = manager.dict()
+        active_workers = manager.Value('i', 0)
+        lock = manager.Lock()
+
+        for url in self.start_urls:
+            task_queue.put(url)
+
+        worker_args = (
+            self,
+            task_queue,
+            urls,
+            visited_urls,
+            active_workers,
+            lock,
+            self.backoff_min,
+            self.backoff_max,
+            self.backoff_factor,
+            self.max_retries,
+        )
+
+        if self.num_processes == 1:
+            worker_loop(*worker_args)
+            merge_temp_files(self.temp_dir, self.output_path, 'Crawler', self.logger)
+            return
+
+        processes = []
         try:
-            # Split the start URLs into chunks
-            chunk_size = max(1, len(self.start_urls) // self.num_processes)
-            url_chunks = [self.start_urls[i:i + chunk_size] for i in range(0, len(self.start_urls), chunk_size)]
-            temp_files = [os.path.join(self.temp_dir, TEMP_FILE(i)) for i in range(len(url_chunks))]
+            current = 0
+            for _ in range(self.num_processes):
+                p = multiprocessing.Process(target=worker_loop, args=worker_args)
+                p.start()
+                processes.append(p)
 
-            # Use multiprocessing to process each chunk
-            with Pool(self.num_processes) as pool:
-                pool.starmap(self.process_chunk, zip(url_chunks, temp_files))
+            while any(p.is_alive() for p in processes):
+                time.sleep(1)
+                with lock:
+                    qsize = task_queue.qsize()
+                    self.logger.info(f"Progress: {len(visited_urls)} processed, {len(urls)} fetched urls {qsize} queued, {active_workers.value} active workers")
 
-            # Merge all temporary files into the final output
-            merge_temp_files(self.temp_dir,
-                             self.output_path,
-                             'Crawler',
-                             self.logger)
-        except Exception as e:
-            self.logger.error(f"Error during crawl: {e}")
+                    if current < len(visited_urls) / self.checkpoint_time:
+                        current = len(visited_urls) / self.checkpoint_time
+                        data = [CrawlData(u).to_dict() for u in urls]
+                        temp_file = str(os.path.join(self.temp_dir, TEMP_FILE(0)))
+                        pd.DataFrame(data).to_parquet(temp_file, index=False)
 
+        except KeyboardInterrupt:
+            self.logger.warning("Received interrupt, terminating workers...")
+        finally:
+            for p in processes:
+                if p.is_alive():
+                    p.terminate()
+            data = [CrawlData(u).to_dict() for u in urls]
+            temp_file = str(os.path.join(self.temp_dir, TEMP_FILE(0)))
+            pd.DataFrame(data).to_parquet(temp_file, index=False)
+            merge_temp_files(self.temp_dir, self.output_path, 'Crawler', self.logger)
+            self.logger.info("Crawl completed.")

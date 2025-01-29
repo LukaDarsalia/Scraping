@@ -73,9 +73,13 @@ class PipelineRunner:
             start_urls=config["start_urls"],
             output_path=output_path,
             temp_dir=config["temp_dir"],
+            backoff_min=config.get("backoff_min", 1),
+            backoff_max=config.get("backoff_max", 5),
+            backoff_factor=config.get("backoff_factor", 2),
             max_retries=config["max_retries"],
             time_sleep=config["time_sleep"],
             num_processes=config["num_processes"],
+            checkpoint_time=config.get("checkpoint_time", 100)
         )
         crawler.run()
 
@@ -85,7 +89,6 @@ class PipelineRunner:
         scraper = scraper_class(
             input_path=input_path,
             output_path=output_path,
-            raw_data_dir=config["raw_data_dir"],
             temp_dir=config["temp_dir"],
             max_retries=config.get("max_retries", 3),
             backoff_min=config.get("backoff_min", 1),
