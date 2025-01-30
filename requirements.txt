@@ -3,3 +3,4 @@ pyarrow
 requests-tor
 fake-useragent
 tqdm
+pytest
