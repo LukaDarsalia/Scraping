@@ -7,6 +7,7 @@ providing functionality to:
 - Dynamically import and initialize pipeline components
 - Execute the pipeline stages in sequence
 - Handle logging and error management
+- Support both monolingual and translation dataset processing
 
 The pipeline consists of three main stages:
 1. Crawler: Discovers and collects URLs
@@ -34,6 +35,7 @@ class PipelineRunner:
     - Dynamic component loading
     - Pipeline execution orchestration
     - Error handling and logging
+    - Support for translation dataset processing
 
     Attributes:
         config_path (str): Path to the YAML configuration file
@@ -207,15 +209,28 @@ class PipelineRunner:
             config: Configuration parameters for the parser
 
         This stage processes downloaded content and extracts structured data.
+        Supports both monolingual and translation dataset processing.
         """
         parser_class = self.dynamic_import(f"parser.{website}", "CustomParser")
+
+        # Extract translation-specific configuration
+        translation_mode = config.get("translation_mode", False)
+        source_lang = config.get("source_lang", "en")
+        target_lang = config.get("target_lang", "ka")
+
+        if translation_mode:
+            self.logger.info(f"Initializing parser in translation mode: {source_lang} -> {target_lang}")
+
         parser = parser_class(
             input_path=input_path,
             output_path=output_path,
             raw_data_dir=config["raw_data_dir"],
             temp_dir=config["temp_dir"],
             num_processes=config["num_processes"],
-            checkpoint_time=config.get("checkpoint_time", 100)
+            checkpoint_time=config.get("checkpoint_time", 100),
+            translation_mode=translation_mode,
+            source_lang=source_lang,
+            target_lang=target_lang
         )
         parser.run()
 

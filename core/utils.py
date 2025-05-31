@@ -27,6 +27,15 @@ TIME = "time"  # Timestamp field name
 CONTENT = "content"  # Content field name
 ERROR = "error"  # Error field name
 
+# Constants for translation datasets
+SOURCE_TEXT = "source_text"  # Source language text
+TARGET_TEXT = "target_text"  # Target language text
+SOURCE_LANG = "source_lang"  # Source language code
+TARGET_LANG = "target_lang"  # Target language code
+ALIGNMENT_INFO = "alignment_info"  # Alignment information
+QUALITY_SCORE = "quality_score"  # Quality score for translation pair
+TRANSLATION_ID = "translation_id"  # Unique identifier for translation pair
+
 # Constants for temporary file naming
 TEMP_FILE_FORMAT = 'temp_data_*.parquet'  # Pattern for temporary files
 TEMP_FILE = lambda i: f'temp_data_{i}.parquet'  # Function to generate temp file names
@@ -217,10 +226,19 @@ class ParsedData:
         raw: Raw content bytes
         format: Format of the content (e.g., 'html', 'json')
         header: Optional page header or title
-        text: Extracted text content
+        text: Extracted text content (for monolingual data)
         category: Optional list of content categories
         time: Optional timestamp of the content
         error: Optional error message if parsing failed
+
+        # Translation-specific fields
+        source_text: Source language text for translation pairs
+        target_text: Target language text for translation pairs
+        source_lang: Source language code (e.g., 'en')
+        target_lang: Target language code (e.g., 'ka')
+        alignment_info: Optional alignment information between source and target
+        quality_score: Optional quality score for the translation pair
+        translation_id: Unique identifier for the translation pair
     """
     URL: str
     raw: bytes
@@ -230,6 +248,15 @@ class ParsedData:
     category: Optional[List[str]]
     time: Optional[datetime.datetime]
     error: Optional[str] = None
+
+    # Translation-specific fields
+    source_text: Optional[str] = None
+    target_text: Optional[str] = None
+    source_lang: Optional[str] = None
+    target_lang: Optional[str] = None
+    alignment_info: Optional[Dict[str, Any]] = None
+    quality_score: Optional[float] = None
+    translation_id: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert the ParsedData instance to a dictionary format."""
@@ -241,7 +268,52 @@ class ParsedData:
             HEADER: self.header,
             CATEGORY: self.category,
             TIME: self.time,
-            ERROR: self.error
+            ERROR: self.error,
+            SOURCE_TEXT: self.source_text,
+            TARGET_TEXT: self.target_text,
+            SOURCE_LANG: self.source_lang,
+            TARGET_LANG: self.target_lang,
+            ALIGNMENT_INFO: self.alignment_info,
+            QUALITY_SCORE: self.quality_score,
+            TRANSLATION_ID: self.translation_id
+        }
+
+
+@dataclass
+class TranslationPair:
+    """
+    Data structure specifically for translation pairs.
+
+    Attributes:
+        source_text: Text in the source language
+        target_text: Text in the target language
+        source_lang: Source language code
+        target_lang: Target language code
+        alignment_info: Optional word/phrase alignment information
+        quality_score: Optional quality score (0.0-1.0)
+        domain: Optional domain/category (e.g., 'news', 'legal', 'medical')
+        metadata: Optional additional metadata
+    """
+    source_text: str
+    target_text: str
+    source_lang: str
+    target_lang: str
+    alignment_info: Optional[Dict[str, Any]] = None
+    quality_score: Optional[float] = None
+    domain: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert the TranslationPair instance to a dictionary format."""
+        return {
+            SOURCE_TEXT: self.source_text,
+            TARGET_TEXT: self.target_text,
+            SOURCE_LANG: self.source_lang,
+            TARGET_LANG: self.target_lang,
+            ALIGNMENT_INFO: self.alignment_info,
+            QUALITY_SCORE: self.quality_score,
+            CATEGORY: self.domain,  # Reuse category field for domain
+            "metadata": self.metadata
         }
 
 
